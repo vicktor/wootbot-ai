@@ -35,12 +35,21 @@ class ChatwootClient:
             logger.info("message_sent", conversation_id=conversation_id, private=private)
             return response.json()
 
-    async def handoff_to_agent(self, conversation_id: int, reason: str = None) -> dict:
-        """Toggle conversation status to 'open' for human agent pickup."""
-        settings = get_settings()
+    HANDOFF_MESSAGES = {
+        "es": "Te transfiero con un agente humano. Un momento por favor.",
+        "ca": "Et transfereixo amb un agent humà. Un moment si us plau.",
+        "en": "I'm transferring you to a human agent. One moment please.",
+        "pt": "Estou transferindo você para um agente humano. Um momento, por favor.",
+        "fr": "Je vous transfère à un agent humain. Un moment s'il vous plaît.",
+        "de": "Ich verbinde Sie mit einem menschlichen Agenten. Einen Moment bitte.",
+    }
 
-        # Send handoff message to customer
-        await self.send_message(conversation_id, settings.handoff_message)
+    async def handoff_to_agent(self, conversation_id: int, reason: str = None, language: str = "en") -> dict:
+        """Toggle conversation status to 'open' for human agent pickup."""
+        handoff_msg = self.HANDOFF_MESSAGES.get(language, self.HANDOFF_MESSAGES["en"])
+
+        # Send handoff message to customer in their language
+        await self.send_message(conversation_id, handoff_msg)
 
         # Add private note with reason for agents
         if reason:

@@ -64,16 +64,18 @@ async def process_message(conversation_id: int, message_content: str):
         confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.3}
         confidence_score = confidence_map.get(confidence, 0.3)
 
+        detected_lang = result.get("detected_language", "en")
+        sources = ", ".join(d.get("title", d["source"])[:50] for d in documents[:3]) if documents else ""
+
         if needs_handoff or (confidence_score < settings.confidence_threshold and top_similarity < 0.5):
             reason = handoff_reason or f"Low confidence ({confidence}), similarity={top_similarity:.2f}"
-            await chatwoot.handoff_to_agent(conversation_id, reason=reason)
-            logger.info("handoff", conversation_id=conversation_id, reason=reason)
+            await chatwoot.handoff_to_agent(conversation_id, reason=reason, language=detected_lang)
+            logger.info("handoff", conversation_id=conversation_id, reason=reason, lang=detected_lang)
         else:
             # 6. Send AI response
             await chatwoot.send_message(conversation_id, answer)
 
             # 7. Add private note with metadata for agents
-            sources = ", ".join(d.get("title", d["source"])[:50] for d in documents[:3])
             note = f"🤖 Confidence: {confidence} | Similarity: {top_similarity:.2f} | Sources: {sources}"
             await chatwoot.send_message(conversation_id, note, private=True)
 
@@ -91,7 +93,7 @@ async def process_message(conversation_id: int, message_content: str):
                 question=message_content[:2000],
                 answer=answer[:2000],
                 confidence=confidence_score,
-                sources_used=sources if documents else None,
+                sources_used=sources or None,
             )
             session.add(log)
             session.commit()

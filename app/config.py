@@ -20,9 +20,8 @@ class Settings(BaseSettings):
     # Bot behavior
     confidence_threshold: float = 0.65
     max_context_messages: int = 10
-    bot_language: str = "es"
-    handoff_message: str = "Te transfiero con un agente humano. Un momento por favor."
-    greeting_message: str = "¡Hola! Soy el asistente de soporte. ¿En qué puedo ayudarte?"
+    handoff_message: str = "I'm transferring you to a human agent. One moment please. / Te transfiero con un agente humano. Un momento por favor."
+    greeting_message: str = "Hello! I'm the support assistant. How can I help you? / ¡Hola! Soy el asistente de soporte. ¿En qué puedo ayudarte?"
 
     # RAG
     chunk_size: int = 500
