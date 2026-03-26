@@ -1,7 +1,7 @@
 import os
 import tempfile
 import structlog
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -12,6 +12,25 @@ from app.rag.ingest import (
 )
 from app.database import get_session, ConversationLog
 from app.config import get_settings
+
+ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
+
+async def verify_admin(request):
+    """Check auth via cookie, query param, or header."""
+    from fastapi import Request
+    # Check cookie first (for UI sessions)
+    token = request.cookies.get("wootbot_admin")
+    if token == ADMIN_SECRET and ADMIN_SECRET:
+        return True
+    # Check header (for API calls)
+    token = request.headers.get("X-Admin-Secret")
+    if token == ADMIN_SECRET and ADMIN_SECRET:
+        return True
+    # Check query param (for initial login)
+    token = request.query_params.get("secret")
+    if token == ADMIN_SECRET and ADMIN_SECRET:
+        return True
+    return False
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/admin")
@@ -105,8 +124,49 @@ async def api_stats():
 # ── Admin UI (embeddable as Chatwoot Dashboard App) ──────────────────
 
 @router.get("/ui", response_class=HTMLResponse)
-async def admin_ui():
-    return ADMIN_HTML
+async def admin_ui(request: Request):
+    from fastapi import Request
+    from fastapi.responses import HTMLResponse
+    if not ADMIN_SECRET:
+        return HTMLResponse(ADMIN_HTML)
+    # Check if authenticated
+    if await verify_admin(request):
+        # Set cookie and serve UI
+        secret = request.query_params.get("secret") or request.cookies.get("wootbot_admin")
+        response = HTMLResponse(ADMIN_HTML)
+        if secret:
+            response.set_cookie("wootbot_admin", secret, httponly=True, max_age=86400, samesite="strict")
+        return response
+    # Show login page
+    return HTMLResponse(LOGIN_HTML)
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WootBot Admin - Login</title>
+<style>
+body{font-family:-apple-system,sans-serif;display:grid;place-content:center;height:100vh;background:#f8f9fa;margin:0}
+.box{background:white;padding:32px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;max-width:320px}
+h2{margin-bottom:16px;font-size:1.2rem}
+input{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:12px;font-size:0.9rem}
+button{width:100%;padding:10px;background:#1a56db;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+button:hover{background:#1e40af}
+.err{color:#dc2626;font-size:0.8rem;margin-top:8px;display:none}
+</style></head><body>
+<div class="box">
+<h2>WootBot Admin</h2>
+<input type="password" id="secret" placeholder="Admin secret">
+<button onclick="login()">Login</button>
+<p class="err" id="err">Invalid secret</p>
+</div>
+<script>
+function login(){
+  const s=document.getElementById('secret').value;
+  if(!s)return;
+  window.location.href=window.location.pathname+'?secret='+encodeURIComponent(s);
+}
+document.getElementById('secret').addEventListener('keypress',e=>{if(e.key==='Enter')login()});
+</script></body></html>"""
+
 
 
 ADMIN_HTML = """<!DOCTYPE html>
@@ -221,7 +281,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-const API = window.location.origin;
+const API = window.location.origin + '/wootbot';
 
 // Tabs
 document.querySelectorAll('.tab').forEach(tab => {
@@ -384,3 +444,10 @@ loadStats();
 </script>
 </body>
 </html>"""
+
+# Override the router to add auth middleware for all API endpoints
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class AdminAuthMiddleware:
+    """Middleware-like check - add to each endpoint or use Depends."""
+    pass

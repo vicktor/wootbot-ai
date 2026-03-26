@@ -15,7 +15,7 @@ class Document(Base):
     source = Column(String(500), nullable=False)  # URL, filename, etc.
     title = Column(String(500), nullable=True)
     content = Column(Text, nullable=False)
-    embedding = Column(Vector(768), nullable=True)
+    embedding = Column(Vector(3072), nullable=True)
     chunk_index = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
