@@ -43,7 +43,7 @@ class GeminiProvider(LLMProvider):
         settings = get_settings()
         genai.configure(api_key=settings.llm_api_key)
         self.model = genai.GenerativeModel(settings.llm_model)
-        self.embed_model = "models/text-embedding-004"
+        self.embed_model = "models/gemini-embedding-001"
 
     async def generate(self, question: str, context: str, history: list[dict] = None) -> dict:
         settings = get_settings()
@@ -135,7 +135,7 @@ class OpenAIProvider(LLMProvider):
 
     async def get_embedding(self, text: str) -> list[float]:
         response = await self.client.embeddings.create(
-            model="text-embedding-3-small", input=text
+            model="gemini-embedding-001", input=text
         )
         return response.data[0].embedding
 
@@ -184,7 +184,7 @@ class AnthropicProvider(LLMProvider):
     async def get_embedding(self, text: str) -> list[float]:
         # Anthropic doesn't provide embeddings, fall back to Gemini
         import google.generativeai as genai
-        result = genai.embed_content(model="models/text-embedding-004", content=text)
+        result = genai.embed_content(model="models/gemini-embedding-001", content=text)
         return result["embedding"]
 
 

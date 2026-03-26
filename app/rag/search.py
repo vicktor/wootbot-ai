@@ -23,10 +23,10 @@ async def search_documents(query: str, top_k: int = 5) -> list[dict]:
         results = session.execute(
             text("""
                 SELECT id, source, title, content,
-                       1 - (embedding <=> :embedding::vector) as similarity
+                       1 - (embedding <=> cast(:embedding as vector)) as similarity
                 FROM documents
                 WHERE embedding IS NOT NULL
-                ORDER BY embedding <=> :embedding::vector
+                ORDER BY embedding <=> cast(:embedding as vector)
                 LIMIT :top_k
             """),
             {"embedding": embedding_str, "top_k": top_k},

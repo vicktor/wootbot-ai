@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, func
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from pgvector.sqlalchemy import Vector
@@ -47,6 +48,6 @@ def init_db():
     """Create tables and enable pgvector extension."""
     engine = get_engine()
     with engine.connect() as conn:
-        conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.commit()
     Base.metadata.create_all(engine)
