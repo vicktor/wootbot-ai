@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.rag.ingest import (
-    ingest_url, ingest_text, ingest_file,
+    ingest_url, ingest_text, ingest_file, ingest_resolved_tickets,
     get_document_stats, delete_document_by_source,
     SUPPORTED_EXTENSIONS,
 )
@@ -85,6 +85,13 @@ async def api_ingest_file(
         return {"status": "ok", "filename": file.filename, "chunks_ingested": count}
     finally:
         os.unlink(tmp_path)
+
+
+@router.post("/ingest/tickets")
+async def api_ingest_tickets(max_pages: int = 10):
+    """Ingest resolved Chatwoot tickets into the knowledge base."""
+    count = await ingest_resolved_tickets(max_pages=max_pages)
+    return {"status": "ok", "chunks_ingested": count}
 
 
 @router.get("/documents")
@@ -239,6 +246,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="tab active" data-tab="tab-file">Upload File</div>
     <div class="tab" data-tab="tab-url">URL</div>
     <div class="tab" data-tab="tab-text">Text</div>
+    <div class="tab" data-tab="tab-tickets">Chatwoot Tickets</div>
   </div>
 
   <div id="tab-file" class="tab-content active">
@@ -268,6 +276,13 @@ ADMIN_HTML = """<!DOCTYPE html>
     <label>Content</label>
     <textarea id="text-content" placeholder="Paste your text here..."></textarea>
     <button class="btn btn-primary" id="btn-text" onclick="ingestText()">Ingest Text</button>
+  </div>
+
+  <div id="tab-tickets" class="tab-content">
+    <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Import resolved Chatwoot conversations into the knowledge base. The bot will learn from successfully handled tickets.</p>
+    <label>Max pages to fetch (25 tickets per page)</label>
+    <input type="text" id="tickets-pages" placeholder="10" value="10">
+    <button class="btn btn-primary" id="btn-tickets" onclick="ingestTickets()">Import Resolved Tickets</button>
   </div>
 </div>
 
@@ -390,6 +405,19 @@ async function ingestText() {
     loadDocs(); loadStats();
   } catch(e) { toast(e.message, 'error'); }
   setLoading('btn-text', false);
+}
+
+async function ingestTickets() {
+  const maxPages = parseInt(document.getElementById('tickets-pages').value) || 10;
+  setLoading('btn-tickets', true);
+  try {
+    const r = await fetch(API + '/admin/ingest/tickets?max_pages=' + maxPages, { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ticket import failed');
+    toast(`Ingested ${data.chunks_ingested} chunks from resolved tickets`);
+    loadDocs(); loadStats();
+  } catch(e) { toast(e.message, 'error'); }
+  setLoading('btn-tickets', false);
 }
 
 async function deleteDoc(source) {

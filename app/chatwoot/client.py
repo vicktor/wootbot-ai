@@ -87,6 +87,17 @@ class ChatwootClient:
                     messages.append({"role": role, "content": msg["content"]})
             return messages
 
+    async def list_resolved_conversations(self, page: int = 1) -> dict:
+        """List resolved conversations (paginated, 25 per page)."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                self._url("/conversations"),
+                headers=self.headers,
+                params={"status": "resolved", "page": page},
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def set_conversation_labels(self, conversation_id: int, labels: list[str]) -> dict:
         """Add labels to a conversation."""
         async with httpx.AsyncClient() as client:

@@ -185,6 +185,54 @@ def get_document_stats() -> dict:
         session.close()
 
 
+async def ingest_resolved_tickets(max_pages: int = 10) -> int:
+    """Ingest resolved Chatwoot conversations as knowledge base entries.
+
+    Fetches resolved tickets, formats each as a Q&A pair, and stores them
+    so the bot can learn from successfully resolved conversations.
+    """
+    from app.chatwoot.client import ChatwootClient
+
+    client = ChatwootClient()
+    total_chunks = 0
+    seen_ids = set()
+
+    for page in range(1, max_pages + 1):
+        data = await client.list_resolved_conversations(page=page)
+        conversations = data.get("data", {}).get("payload", [])
+
+        if not conversations:
+            break
+
+        for conv in conversations:
+            conv_id = conv.get("id")
+            if not conv_id or conv_id in seen_ids:
+                continue
+            seen_ids.add(conv_id)
+
+            messages = await client.get_messages(conv_id)
+            if len(messages) < 2:
+                continue
+
+            # Build a readable transcript
+            lines = []
+            for msg in messages:
+                role = "Customer" if msg["role"] == "user" else "Agent"
+                lines.append(f"{role}: {msg['content']}")
+
+            transcript = "\n".join(lines)
+            source = f"chatwoot-ticket-{conv_id}"
+            title = f"Resolved ticket #{conv_id}"
+
+            count = await ingest_text(transcript, source=source, title=title)
+            total_chunks += count
+
+        logger.info("ingested_tickets_page", page=page, conversations=len(conversations))
+
+    logger.info("ingested_resolved_tickets", total_chunks=total_chunks, tickets=len(seen_ids))
+    return total_chunks
+
+
 def delete_document_by_source(source: str) -> int:
     """Delete all chunks from a specific source."""
     session = get_session()
@@ -208,26 +256,34 @@ if __name__ == "__main__":
 
     init_db()
 
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print("Usage:")
         print("  python -m app.rag.ingest url https://docs.example.com 'Title'")
         print("  python -m app.rag.ingest file /path/to/doc.pdf 'Title'")
+        print("  python -m app.rag.ingest tickets [max_pages]")
         print(f"  Supported files: {', '.join(SUPPORTED_EXTENSIONS)}")
         sys.exit(1)
 
     mode = sys.argv[1]
-    content = sys.argv[2]
-    title = sys.argv[3] if len(sys.argv) > 3 else None
 
     async def main():
-        if mode == "url":
-            count = await ingest_url(content, title)
+        if mode == "tickets":
+            max_pages = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+            count = await ingest_resolved_tickets(max_pages=max_pages)
+        elif len(sys.argv) < 3:
+            print(f"Mode '{mode}' requires additional arguments.")
+            sys.exit(1)
+        elif mode == "url":
+            title = sys.argv[3] if len(sys.argv) > 3 else None
+            count = await ingest_url(sys.argv[2], title)
         elif mode == "file":
-            count = await ingest_file(content, title)
+            title = sys.argv[3] if len(sys.argv) > 3 else None
+            count = await ingest_file(sys.argv[2], title)
         elif mode == "text":
-            count = await ingest_text(content, source="manual", title=title)
+            title = sys.argv[3] if len(sys.argv) > 3 else None
+            count = await ingest_text(sys.argv[2], source="manual", title=title)
         else:
-            print(f"Unknown mode: {mode}. Use: url, file, text")
+            print(f"Unknown mode: {mode}. Use: url, file, text, tickets")
             sys.exit(1)
         print(f"Ingested {count} chunks")
 
