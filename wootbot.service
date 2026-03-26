@@ -1,0 +1,23 @@
+[Unit]
+Description=WootBot AI - Chatwoot AI Agent Bot
+After=network.target postgresql.service
+
+[Service]
+User=chatwoot
+WorkingDirectory=/home/chatwoot/wootbot
+EnvironmentFile=/home/chatwoot/wootbot/.env
+ExecStart=/home/chatwoot/wootbot/.venv/bin/gunicorn \
+  -w 2 \
+  -k uvicorn.workers.UvicornWorker \
+  --bind 127.0.0.1:8200 \
+  --timeout 120 \
+  --graceful-timeout 30 \
+  --access-logfile - \
+  --error-logfile - \
+  app.main:app
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
