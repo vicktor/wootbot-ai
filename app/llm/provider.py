@@ -39,11 +39,11 @@ class LLMProvider(ABC):
 
 class GeminiProvider(LLMProvider):
     def __init__(self):
-        import google.generativeai as genai
+        from google import genai
         settings = get_settings()
-        genai.configure(api_key=settings.llm_api_key)
-        self.model = genai.GenerativeModel(settings.llm_model)
-        self.embed_model = "models/gemini-embedding-001"
+        self.client = genai.Client(api_key=settings.llm_api_key)
+        self.model_name = settings.llm_model
+        self.embed_model = "gemini-embedding-001"
 
     async def generate(self, question: str, context: str, history: list[dict] = None) -> dict:
         settings = get_settings()
@@ -70,7 +70,9 @@ Customer question: {question}
 Respond with valid JSON only."""
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.model_name, contents=prompt
+            )
             text = response.text.strip()
             # Clean markdown fences if present
             if text.startswith("```"):
@@ -86,9 +88,10 @@ Respond with valid JSON only."""
             }
 
     async def get_embedding(self, text: str) -> list[float]:
-        import google.generativeai as genai
-        result = genai.embed_content(model=self.embed_model, content=text)
-        return result["embedding"]
+        result = self.client.models.embed_content(
+            model=self.embed_model, contents=text
+        )
+        return result.embeddings[0].values
 
 
 class OpenAIProvider(LLMProvider):
@@ -183,9 +186,13 @@ class AnthropicProvider(LLMProvider):
 
     async def get_embedding(self, text: str) -> list[float]:
         # Anthropic doesn't provide embeddings, fall back to Gemini
-        import google.generativeai as genai
-        result = genai.embed_content(model="models/gemini-embedding-001", content=text)
-        return result["embedding"]
+        from google import genai
+        settings = get_settings()
+        client = genai.Client(api_key=settings.llm_api_key)
+        result = client.models.embed_content(
+            model="gemini-embedding-001", contents=text
+        )
+        return result.embeddings[0].values
 
 
 def get_llm_provider() -> LLMProvider:
