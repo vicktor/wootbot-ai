@@ -1,5 +1,6 @@
 import structlog
 import requests
+from pathlib import Path
 from bs4 import BeautifulSoup
 
 from app.config import get_settings
@@ -7,6 +8,8 @@ from app.database import get_session, Document, init_db
 from app.llm.provider import get_llm_provider
 
 logger = structlog.get_logger()
+
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".md", ".txt", ".csv"}
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
@@ -64,7 +67,6 @@ async def ingest_url(url: str, title: str = None) -> int:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Remove scripts, styles, nav, footer
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
 
@@ -78,24 +80,128 @@ async def ingest_url(url: str, title: str = None) -> int:
 
 
 async def ingest_pdf(filepath: str, title: str = None) -> int:
-    """Ingest a PDF file (requires pdfplumber or pymupdf)."""
+    """Ingest a PDF file."""
+    import pdfplumber
+    text_parts = []
+    with pdfplumber.open(filepath) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text)
+
+    full_text = "\n\n".join(text_parts)
+    return await ingest_text(full_text, source=filepath, title=title or Path(filepath).name)
+
+
+async def ingest_docx(filepath: str, title: str = None) -> int:
+    """Ingest a DOCX file."""
+    import docx
+    doc = docx.Document(filepath)
+    text_parts = [para.text for para in doc.paragraphs if para.text.strip()]
+
+    for table in doc.tables:
+        for row in table.rows:
+            row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+            if row_text:
+                text_parts.append(row_text)
+
+    full_text = "\n\n".join(text_parts)
+    return await ingest_text(full_text, source=filepath, title=title or Path(filepath).name)
+
+
+async def ingest_markdown(filepath: str, title: str = None) -> int:
+    """Ingest a Markdown file."""
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    if not title:
+        for line in content.split("\n"):
+            if line.startswith("# "):
+                title = line.lstrip("# ").strip()
+                break
+
+    return await ingest_text(content, source=filepath, title=title or Path(filepath).name)
+
+
+async def ingest_csv(filepath: str, title: str = None) -> int:
+    """Ingest a CSV file — each row becomes searchable text."""
+    import csv
+    text_parts = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        headers = next(reader, None)
+        if headers:
+            for row in reader:
+                row_text = " | ".join(f"{h}: {v}" for h, v in zip(headers, row) if v.strip())
+                if row_text:
+                    text_parts.append(row_text)
+
+    full_text = "\n".join(text_parts)
+    return await ingest_text(full_text, source=filepath, title=title or Path(filepath).name)
+
+
+async def ingest_file(filepath: str, title: str = None) -> int:
+    """Auto-detect file type and ingest."""
+    ext = Path(filepath).suffix.lower()
+    handlers = {
+        ".pdf": ingest_pdf,
+        ".docx": ingest_docx,
+        ".md": ingest_markdown,
+        ".txt": _ingest_txt,
+        ".csv": ingest_csv,
+    }
+    handler = handlers.get(ext)
+    if not handler:
+        raise ValueError(f"Unsupported file type: {ext}. Supported: {', '.join(SUPPORTED_EXTENSIONS)}")
+    return await handler(filepath, title)
+
+
+async def _ingest_txt(filepath: str, title: str = None) -> int:
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+    return await ingest_text(content, source=filepath, title=title or Path(filepath).name)
+
+
+def get_document_stats() -> dict:
+    """Get stats about ingested documents."""
+    session = get_session()
     try:
-        import pdfplumber
-        text_parts = []
-        with pdfplumber.open(filepath) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text_parts.append(page_text)
+        from sqlalchemy import func, distinct
+        total_chunks = session.query(Document).count()
+        total_sources = session.query(func.count(distinct(Document.source))).scalar()
+        sources = session.query(
+            Document.source, Document.title, func.count(Document.id).label("chunks")
+        ).group_by(Document.source, Document.title).all()
 
-        full_text = "\n\n".join(text_parts)
-        return await ingest_text(full_text, source=filepath, title=title or filepath)
-    except ImportError:
-        logger.error("pdfplumber not installed. Run: pip install pdfplumber")
+        return {
+            "total_chunks": total_chunks,
+            "total_sources": total_sources,
+            "sources": [
+                {"source": s[0], "title": s[1], "chunks": s[2]}
+                for s in sources
+            ],
+        }
+    finally:
+        session.close()
+
+
+def delete_document_by_source(source: str) -> int:
+    """Delete all chunks from a specific source."""
+    session = get_session()
+    try:
+        count = session.query(Document).filter(Document.source == source).delete()
+        session.commit()
+        logger.info("deleted_document", source=source, chunks_deleted=count)
+        return count
+    except Exception as e:
+        session.rollback()
+        logger.error("delete_error", error=str(e))
         raise
+    finally:
+        session.close()
 
 
-# CLI entrypoint for ingestion
+# CLI entrypoint
 if __name__ == "__main__":
     import asyncio
     import sys
@@ -104,9 +210,9 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 3:
         print("Usage:")
-        print("  python -m app.rag.ingest url https://docs.example.com 'My Docs'")
-        print("  python -m app.rag.ingest text 'Your text here' 'Source name'")
-        print("  python -m app.rag.ingest pdf /path/to/file.pdf 'Doc title'")
+        print("  python -m app.rag.ingest url https://docs.example.com 'Title'")
+        print("  python -m app.rag.ingest file /path/to/doc.pdf 'Title'")
+        print(f"  Supported files: {', '.join(SUPPORTED_EXTENSIONS)}")
         sys.exit(1)
 
     mode = sys.argv[1]
@@ -116,12 +222,12 @@ if __name__ == "__main__":
     async def main():
         if mode == "url":
             count = await ingest_url(content, title)
+        elif mode == "file":
+            count = await ingest_file(content, title)
         elif mode == "text":
             count = await ingest_text(content, source="manual", title=title)
-        elif mode == "pdf":
-            count = await ingest_pdf(content, title)
         else:
-            print(f"Unknown mode: {mode}")
+            print(f"Unknown mode: {mode}. Use: url, file, text")
             sys.exit(1)
         print(f"Ingested {count} chunks")
 

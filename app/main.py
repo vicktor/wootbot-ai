@@ -1,14 +1,13 @@
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks
-from pydantic import BaseModel
 
 from app.config import get_settings
 from app.database import init_db, get_session, ConversationLog
 from app.chatwoot.client import ChatwootClient
 from app.llm.provider import get_llm_provider
 from app.rag.search import search_documents, format_context
-from app.rag.ingest import ingest_url, ingest_text
+from app.admin.router import router as admin_router
 
 logger = structlog.get_logger()
 chatwoot = ChatwootClient()
@@ -148,56 +147,8 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
     return {"status": "ok"}
 
 
-# ── Admin API ────────────────────────────────────────────────────────
-
-class IngestURLRequest(BaseModel):
-    url: str
-    title: str | None = None
-
-
-class IngestTextRequest(BaseModel):
-    content: str
-    source: str
-    title: str | None = None
-
-
-@app.post("/admin/ingest/url")
-async def admin_ingest_url(req: IngestURLRequest):
-    """Ingest a URL into the knowledge base."""
-    count = await ingest_url(req.url, req.title)
-    return {"status": "ok", "chunks_ingested": count}
-
-
-@app.post("/admin/ingest/text")
-async def admin_ingest_text(req: IngestTextRequest):
-    """Ingest plain text into the knowledge base."""
-    count = await ingest_text(req.content, req.source, req.title)
-    return {"status": "ok", "chunks_ingested": count}
-
-
-@app.get("/admin/stats")
-async def admin_stats():
-    """Get bot statistics."""
-    session = get_session()
-    try:
-        from sqlalchemy import func, text
-        total_logs = session.query(ConversationLog).count()
-        avg_confidence = session.query(func.avg(ConversationLog.confidence)).scalar()
-        handoff_count = session.query(ConversationLog).filter(
-            ConversationLog.confidence < get_settings().confidence_threshold
-        ).count()
-
-        from app.database import Document
-        total_docs = session.query(Document).count()
-
-        return {
-            "total_conversations_handled": total_logs,
-            "average_confidence": round(float(avg_confidence or 0), 3),
-            "handoff_count": handoff_count,
-            "knowledge_base_chunks": total_docs,
-        }
-    finally:
-        session.close()
+# ── Admin Panel (embeddable as Chatwoot Dashboard App) ───────────────
+app.include_router(admin_router)
 
 
 @app.get("/health")
