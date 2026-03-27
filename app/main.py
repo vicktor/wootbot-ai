@@ -92,6 +92,8 @@ async def process_message(conversation_id: int, message_content: str, contact_in
                 if greeting or closing:
                     translated_greeting = await llm.translate(greeting, detected_lang) if greeting else ""
                     translated_closing = await llm.translate(closing, detected_lang) if closing else ""
+                    # Chatwoot email only renders \n\n as line breaks, not single \n
+                    translated_closing = translated_closing.replace("\n", "\n\n") if translated_closing else ""
                     parts = []
                     if translated_greeting:
                         parts.append(translated_greeting)
@@ -99,8 +101,6 @@ async def process_message(conversation_id: int, message_content: str, contact_in
                     if translated_closing:
                         parts.append(translated_closing)
                     response_text = "\n\n".join(parts)
-                # Email renders as HTML — convert newlines to <br>
-                response_text = response_text.replace("\n", "<br>")
 
             # 7. Send AI response
             await chatwoot.send_message(conversation_id, response_text)
