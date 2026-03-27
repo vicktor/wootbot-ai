@@ -2,8 +2,8 @@ import json
 import asyncio
 import structlog
 from abc import ABC, abstractmethod
-from functools import lru_cache
 from app.config import get_settings
+from app.database import get_bot_setting
 
 logger = structlog.get_logger()
 
@@ -143,9 +143,9 @@ class LLMProvider(ABC):
 class GeminiProvider(LLMProvider):
     def __init__(self):
         from google import genai
-        settings = get_settings()
-        self.client = genai.Client(api_key=settings.llm_api_key)
-        self.model_name = settings.llm_model
+        config = get_llm_config()
+        self.client = genai.Client(api_key=config["api_key"])
+        self.model_name = config["model"]
 
     # #6: Wrap sync google-genai calls with asyncio.to_thread
     async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
@@ -176,12 +176,12 @@ class GeminiProvider(LLMProvider):
 class OpenAIProvider(LLMProvider):
     def __init__(self):
         from openai import AsyncOpenAI
-        settings = get_settings()
-        kwargs = {"api_key": settings.llm_api_key}
-        if settings.llm_base_url:
-            kwargs["base_url"] = settings.llm_base_url
+        config = get_llm_config()
+        kwargs = {"api_key": config["api_key"]}
+        if config["base_url"]:
+            kwargs["base_url"] = config["base_url"]
         self.client = AsyncOpenAI(**kwargs)
-        self.model = settings.llm_model
+        self.model = config["model"]
 
     async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
         prompt = _build_prompt(question, context, history, contact_info, channel)
@@ -210,9 +210,9 @@ class OpenAIProvider(LLMProvider):
 class AnthropicProvider(LLMProvider):
     def __init__(self):
         import anthropic
-        settings = get_settings()
-        self.client = anthropic.AsyncAnthropic(api_key=settings.llm_api_key)
-        self.model = settings.llm_model or "claude-sonnet-4-20250514"
+        config = get_llm_config()
+        self.client = anthropic.AsyncAnthropic(api_key=config["api_key"])
+        self.model = config["model"] or "claude-sonnet-4-20250514"
 
     async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
         prompt = _build_prompt(question, context, history, contact_info, channel)
@@ -238,16 +238,55 @@ class AnthropicProvider(LLMProvider):
             return text
 
 
-# #20: Cache provider instance to avoid re-creating clients on every request
-@lru_cache
-def get_llm_provider() -> LLMProvider:
+LLM_MODELS = {
+    "gemini": {
+        "gemini-2.0-flash": "Fast, cost-effective",
+        "gemini-2.5-flash-preview-05-20": "Latest preview",
+        "gemini-2.5-pro-preview-05-06": "Most capable",
+    },
+    "openai": {
+        "gpt-4o-mini": "Fast, cost-effective",
+        "gpt-4o": "Most capable",
+        "gpt-4.1-mini": "Latest mini",
+        "gpt-4.1": "Latest full",
+    },
+    "anthropic": {
+        "claude-sonnet-4-20250514": "Balanced",
+        "claude-haiku-4-20250414": "Fast, cost-effective",
+        "claude-opus-4-20250514": "Most capable",
+    },
+}
+
+
+def get_llm_config() -> dict:
+    """Get LLM config from DB with fallback to .env."""
     settings = get_settings()
-    providers = {
-        "gemini": GeminiProvider,
-        "openai": OpenAIProvider,
-        "anthropic": AnthropicProvider,
+    return {
+        "provider": get_bot_setting("llm_provider", "") or settings.llm_provider,
+        "model": get_bot_setting("llm_model", "") or settings.llm_model,
+        "api_key": get_bot_setting("llm_api_key", "") or settings.llm_api_key,
+        "base_url": get_bot_setting("llm_base_url", "") or (settings.llm_base_url or ""),
     }
-    provider_class = providers.get(settings.llm_provider)
-    if not provider_class:
-        raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
-    return provider_class()
+
+
+_llm_cache: dict[tuple, LLMProvider] = {}
+
+
+def get_llm_provider() -> LLMProvider:
+    """Get or create LLM provider based on DB config (cached, auto-invalidates on change)."""
+    config = get_llm_config()
+    cache_key = (config["provider"], config["model"], config["api_key"], config["base_url"])
+
+    if cache_key not in _llm_cache:
+        providers = {
+            "gemini": GeminiProvider,
+            "openai": OpenAIProvider,
+            "anthropic": AnthropicProvider,
+        }
+        provider_class = providers.get(config["provider"])
+        if not provider_class:
+            raise ValueError(f"Unknown LLM provider: {config['provider']}")
+        _llm_cache[cache_key] = provider_class()
+        logger.info("llm_provider_created", provider=config["provider"], model=config["model"])
+
+    return _llm_cache[cache_key]

@@ -15,6 +15,7 @@ from app.database import get_session, ConversationLog, get_bot_setting, set_bot_
 from app.config import get_settings
 from app.rag.embeddings import EMBEDDING_MODELS, get_embedding_config
 from app.rag.reembed import reembed_all, get_reembed_status
+from app.llm.provider import LLM_MODELS, get_llm_config
 
 logger = structlog.get_logger()
 
@@ -176,6 +177,46 @@ async def api_update_settings(req: UpdateSettingsRequest):
             set_bot_setting(key, value)
             updated.append(key)
     return {"status": "ok", "updated": updated}
+
+
+# ── LLM Config Endpoints ────────────────────────────────────────────
+
+class LLMConfigRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str = ""
+    base_url: str = ""
+
+
+@router.get("/llm")
+async def api_get_llm_config():
+    config = get_llm_config()
+    masked_key = config["api_key"]
+    if masked_key and len(masked_key) > 12:
+        masked_key = masked_key[:8] + "..." + masked_key[-4:]
+    elif masked_key:
+        masked_key = "***"
+    return {
+        "provider": config["provider"],
+        "model": config["model"],
+        "base_url": config["base_url"],
+        "api_key_set": bool(config["api_key"]),
+        "api_key_masked": masked_key,
+        "models": LLM_MODELS,
+    }
+
+
+@router.put("/llm")
+async def api_update_llm(req: LLMConfigRequest):
+    if req.provider not in LLM_MODELS:
+        raise HTTPException(400, f"Unknown provider: {req.provider}")
+    set_bot_setting("llm_provider", req.provider)
+    set_bot_setting("llm_model", req.model)
+    if req.api_key:
+        set_bot_setting("llm_api_key", req.api_key)
+    if req.base_url is not None:
+        set_bot_setting("llm_base_url", req.base_url)
+    return {"status": "ok"}
 
 
 # ── Embedding Config Endpoints ──────────────────────────────────────
@@ -413,6 +454,22 @@ ADMIN_HTML = """<!DOCTYPE html>
   </div>
 
   <div id="tab-settings" class="tab-content">
+    <h3 style="margin-bottom:8px;font-size:0.9rem">LLM Provider</h3>
+    <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Choose the LLM provider for generating responses and translations.</p>
+    <label>Provider</label>
+    <select id="set-llm-provider" onchange="updateLLMModelOptions()">
+      <option value="gemini">Google (Gemini)</option>
+      <option value="openai">OpenAI</option>
+      <option value="anthropic">Anthropic (Claude)</option>
+    </select>
+    <label>Model</label>
+    <select id="set-llm-model"></select>
+    <label>API Key (leave empty to keep current)</label>
+    <input type="password" id="set-llm-key" placeholder="API key for LLM provider">
+    <label>Base URL (optional, for OpenAI-compatible endpoints)</label>
+    <input type="text" id="set-llm-baseurl" placeholder="https://api.example.com/v1">
+    <button class="btn btn-primary" id="btn-llm" onclick="saveLLM()">Save LLM Config</button>
+    <hr style="margin:20px 0;border:none;border-top:1px solid #e5e7eb">
     <h3 style="margin-bottom:8px;font-size:0.9rem">Embedding Provider</h3>
     <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Choose the embedding provider and model. Changing provider will re-generate all embeddings (may take a few minutes).</p>
     <label>Provider</label>
@@ -664,6 +721,52 @@ async function saveSettings() {
   setLoading('btn-settings', false);
 }
 
+// LLM Config
+const LLM_MODELS = {};
+
+function updateLLMModelOptions() {
+  const provider = document.getElementById('set-llm-provider').value;
+  const select = document.getElementById('set-llm-model');
+  const models = LLM_MODELS[provider] || {};
+  select.innerHTML = Object.keys(models).map(m =>
+    '<option value="' + m + '">' + m + ' - ' + models[m] + '</option>'
+  ).join('');
+}
+
+async function loadLLMConfig() {
+  try {
+    const r = await authFetch(API + '/admin/llm');
+    const d = await r.json();
+    Object.assign(LLM_MODELS, d.models || {});
+    document.getElementById('set-llm-provider').value = d.provider;
+    updateLLMModelOptions();
+    document.getElementById('set-llm-model').value = d.model;
+    document.getElementById('set-llm-baseurl').value = d.base_url || '';
+    if (d.api_key_masked) {
+      document.getElementById('set-llm-key').placeholder = 'Current: ' + d.api_key_masked;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function saveLLM() {
+  const provider = document.getElementById('set-llm-provider').value;
+  const model = document.getElementById('set-llm-model').value;
+  const api_key = document.getElementById('set-llm-key').value;
+  const base_url = document.getElementById('set-llm-baseurl').value;
+  setLoading('btn-llm', true);
+  try {
+    const r = await authFetch(API + '/admin/llm', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ provider, model, api_key, base_url })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Save failed');
+    toast('LLM config saved');
+  } catch(e) { toast(e.message, 'error'); }
+  setLoading('btn-llm', false);
+}
+
+// Embedding Config
 const EMB_MODELS = {};
 
 function updateModelOptions() {
@@ -736,6 +839,7 @@ function pollReembedStatus() {
 loadDocs();
 loadStats();
 loadSettings();
+loadLLMConfig();
 loadEmbeddingConfig();
 </script>
 </body>
