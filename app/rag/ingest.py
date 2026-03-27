@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from app.config import get_settings
 from app.database import get_session, Document, init_db
-from app.llm.provider import get_llm_provider
+from app.rag.embeddings import get_embedding_provider
 
 logger = structlog.get_logger()
 
@@ -32,14 +32,14 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
 async def ingest_text(content: str, source: str, title: str = None) -> int:
     """Ingest plain text into the knowledge base."""
     settings = get_settings()
-    llm = get_llm_provider()
+    embedder = get_embedding_provider()
     session = get_session()
     count = 0
 
     try:
         chunks = chunk_text(content, settings.chunk_size, settings.chunk_overlap)
         for i, chunk in enumerate(chunks):
-            embedding = await llm.get_embedding(chunk)
+            embedding = await embedder.embed(chunk)
             doc = Document(
                 source=source,
                 title=title or source,

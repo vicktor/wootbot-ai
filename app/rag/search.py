@@ -1,17 +1,17 @@
 import structlog
 from sqlalchemy import text
 from app.database import get_session, Document
-from app.llm.provider import get_llm_provider
+from app.rag.embeddings import get_embedding_provider
 
 logger = structlog.get_logger()
 
 
 async def search_documents(query: str, top_k: int = 5) -> list[dict]:
     """Search knowledge base using semantic similarity with pgvector."""
-    llm = get_llm_provider()
+    embedder = get_embedding_provider()
 
     try:
-        query_embedding = await llm.get_embedding(query)
+        query_embedding = await embedder.embed(query)
     except Exception as e:
         logger.error("embedding_error", error=str(e))
         return []

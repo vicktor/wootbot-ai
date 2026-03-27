@@ -2,7 +2,7 @@ import hmac
 import os
 import tempfile
 import structlog
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, Depends
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, Depends, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -13,6 +13,8 @@ from app.rag.ingest import (
 )
 from app.database import get_session, ConversationLog, get_bot_setting, set_bot_setting
 from app.config import get_settings
+from app.rag.embeddings import EMBEDDING_MODELS, get_embedding_config
+from app.rag.reembed import reembed_all, get_reembed_status
 
 logger = structlog.get_logger()
 
@@ -176,6 +178,46 @@ async def api_update_settings(req: UpdateSettingsRequest):
     return {"status": "ok", "updated": updated}
 
 
+# ── Embedding Config Endpoints ──────────────────────────────────────
+
+class EmbeddingConfigRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str = ""
+
+
+@router.get("/embedding")
+async def api_get_embedding_config():
+    config = get_embedding_config()
+    masked_key = config["api_key"]
+    if masked_key and len(masked_key) > 12:
+        masked_key = masked_key[:8] + "..." + masked_key[-4:]
+    elif masked_key:
+        masked_key = "***"
+    return {
+        "provider": config["provider"],
+        "model": config["model"],
+        "api_key_set": bool(config["api_key"]),
+        "api_key_masked": masked_key,
+        "models": EMBEDDING_MODELS,
+    }
+
+
+@router.put("/embedding")
+async def api_update_embedding(req: EmbeddingConfigRequest, background_tasks: BackgroundTasks):
+    if req.provider not in EMBEDDING_MODELS:
+        raise HTTPException(400, f"Unknown provider: {req.provider}")
+    if req.model not in EMBEDDING_MODELS[req.provider]:
+        raise HTTPException(400, f"Unknown model: {req.model} for provider {req.provider}")
+    background_tasks.add_task(reembed_all, req.provider, req.model, req.api_key)
+    return {"status": "ok", "message": "Re-embedding started in background"}
+
+
+@router.get("/embedding/status")
+async def api_reembed_status():
+    return get_reembed_status()
+
+
 @public_router.post("/login")
 async def admin_login(request: Request):
     """Validate secret — client stores it and sends as header on future requests."""
@@ -282,7 +324,7 @@ ADMIN_HTML = """<!DOCTYPE html>
   .tab.active { color: #1a56db; border-bottom-color: #1a56db; font-weight: 600; }
   .tab-content { display: none; }
   .tab-content.active { display: block; }
-  input[type="text"], input[type="url"] { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; }
+  input[type="text"], input[type="url"], input[type="password"], select { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; }
   textarea { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; min-height: 80px; resize: vertical; }
   label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: #374151; }
   .btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
@@ -371,7 +413,22 @@ ADMIN_HTML = """<!DOCTYPE html>
   </div>
 
   <div id="tab-settings" class="tab-content">
-    <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Email formatting settings. The greeting and closing are automatically translated by the AI to the customer's language.</p>
+    <h3 style="margin-bottom:8px;font-size:0.9rem">Embedding Provider</h3>
+    <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Choose the embedding provider and model. Changing provider will re-generate all embeddings (may take a few minutes).</p>
+    <label>Provider</label>
+    <select id="set-emb-provider" onchange="updateModelOptions()">
+      <option value="gemini">Google (Gemini)</option>
+      <option value="openai">OpenAI</option>
+    </select>
+    <label>Model</label>
+    <select id="set-emb-model"></select>
+    <label>API Key (leave empty to use LLM key from .env)</label>
+    <input type="password" id="set-emb-key" placeholder="API key for embedding provider">
+    <div id="emb-status" style="display:none;padding:8px;background:#f0f4ff;border-radius:6px;margin-bottom:8px;font-size:0.85rem"></div>
+    <button class="btn btn-primary" id="btn-embedding" onclick="saveEmbedding()">Save Embedding Config</button>
+    <hr style="margin:20px 0;border:none;border-top:1px solid #e5e7eb">
+    <h3 style="margin-bottom:8px;font-size:0.9rem">Email Formatting</h3>
+    <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">The greeting and closing are automatically translated by the AI to the customer's language.</p>
     <label>Email Greeting</label>
     <input type="text" id="set-email-greeting" placeholder="Hola, gracias por contactar con nosotros.">
     <label>Email Closing</label>
@@ -607,9 +664,79 @@ async function saveSettings() {
   setLoading('btn-settings', false);
 }
 
+const EMB_MODELS = {};
+
+function updateModelOptions() {
+  const provider = document.getElementById('set-emb-provider').value;
+  const select = document.getElementById('set-emb-model');
+  const models = EMB_MODELS[provider] || {};
+  select.innerHTML = Object.keys(models).map(m =>
+    '<option value="' + m + '">' + m + ' (' + models[m] + ' dims)</option>'
+  ).join('');
+}
+
+async function loadEmbeddingConfig() {
+  try {
+    const r = await authFetch(API + '/admin/embedding');
+    const d = await r.json();
+    Object.assign(EMB_MODELS, d.models || {});
+    document.getElementById('set-emb-provider').value = d.provider;
+    updateModelOptions();
+    document.getElementById('set-emb-model').value = d.model;
+    if (d.api_key_masked) {
+      document.getElementById('set-emb-key').placeholder = 'Current: ' + d.api_key_masked;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function saveEmbedding() {
+  const provider = document.getElementById('set-emb-provider').value;
+  const model = document.getElementById('set-emb-model').value;
+  const api_key = document.getElementById('set-emb-key').value;
+  setLoading('btn-embedding', true);
+  try {
+    const r = await authFetch(API + '/admin/embedding', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ provider, model, api_key })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Save failed');
+    toast('Embedding config saved. Re-embedding started...');
+    pollReembedStatus();
+  } catch(e) { toast(e.message, 'error'); }
+  setLoading('btn-embedding', false);
+}
+
+function pollReembedStatus() {
+  const el = document.getElementById('emb-status');
+  el.style.display = 'block';
+  el.textContent = 'Re-embedding in progress...';
+  const interval = setInterval(async () => {
+    try {
+      const r = await authFetch(API + '/admin/embedding/status');
+      const d = await r.json();
+      if (d.running) {
+        el.textContent = 'Re-embedding: ' + d.done + ' / ' + d.total + ' chunks...';
+      } else {
+        clearInterval(interval);
+        if (d.error) {
+          el.textContent = 'Error: ' + d.error;
+          el.style.background = '#fef2f2';
+        } else {
+          el.textContent = 'Re-embedding complete! ' + d.done + ' chunks processed.';
+          el.style.background = '#f0fdf4';
+          setTimeout(() => { el.style.display = 'none'; }, 5000);
+        }
+        loadDocs(); loadStats();
+      }
+    } catch(e) { clearInterval(interval); }
+  }, 2000);
+}
+
 loadDocs();
 loadStats();
 loadSettings();
+loadEmbeddingConfig();
 </script>
 </body>
 </html>"""
