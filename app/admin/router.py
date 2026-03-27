@@ -205,19 +205,16 @@ def _secure_response(html: str) -> HTMLResponse:
 
 @public_router.get("/ui", response_class=HTMLResponse)
 async def admin_ui(request: Request):
-    """Serve admin UI. Auth is handled client-side via X-Admin-Secret header."""
+    """Serve admin UI with secret injected into JS."""
     admin_secret = _get_admin_secret()
     if not admin_secret:
-        return _secure_response(ADMIN_HTML)
+        # No auth configured — serve without secret
+        return _secure_response(ADMIN_HTML.replace("__ADMIN_SECRET__", ""))
 
-    # If ?secret= in URL, serve the admin page (JS will capture and store it)
+    # If ?secret= is valid, inject it into the page
     query_secret = request.query_params.get("secret", "")
     if query_secret and hmac.compare_digest(query_secret, admin_secret):
-        return _secure_response(ADMIN_HTML)
-
-    # If already authenticated via header/cookie
-    if await verify_admin(request):
-        return _secure_response(ADMIN_HTML)
+        return _secure_response(ADMIN_HTML.replace("__ADMIN_SECRET__", query_secret))
 
     # Show login page
     return _secure_response(LOGIN_HTML)
@@ -253,8 +250,7 @@ async function login(){
       body: JSON.stringify({secret: s})
     });
     if(r.ok) {
-      sessionStorage.setItem('wootbot_secret', s);
-      window.location.reload();
+      window.location.href = window.location.pathname + '?secret=' + encodeURIComponent(s);
     }
     else { document.getElementById('err').style.display='block'; }
   } catch(e) { document.getElementById('err').style.display='block'; }
@@ -394,19 +390,18 @@ ADMIN_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-// Capture secret from URL or sessionStorage
-const params = new URLSearchParams(window.location.search);
-if (params.has('secret')) {
-  sessionStorage.setItem('wootbot_secret', params.get('secret'));
+// Secret injected by server — clean it from URL bar
+const SECRET = '__ADMIN_SECRET__';
+if (window.location.search.includes('secret=')) {
   window.history.replaceState({}, '', window.location.pathname);
 }
-const SECRET = sessionStorage.getItem('wootbot_secret') || '';
 
 const API = window.location.origin + '/wootbot';
 
 // Authenticated fetch helper
 function authFetch(url, opts = {}) {
-  opts.headers = Object.assign({'X-Admin-Secret': SECRET}, opts.headers || {});
+  if (!opts.headers) opts.headers = {};
+  opts.headers['X-Admin-Secret'] = SECRET;
   return fetch(url, opts);
 }
 
