@@ -4,9 +4,14 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Chatwoot
-    chatwoot_url: str = "https://support.listen.doctor"
+    chatwoot_url: str = ""
     chatwoot_bot_token: str = ""
     chatwoot_account_id: int = 1
+
+    # Security
+    webhook_secret: str = ""
+    admin_secret: str = ""
+    allowed_origins: str = ""  # comma-separated origins for iframe CSP
 
     # LLM
     llm_provider: str = "gemini"  # gemini, openai, anthropic
@@ -14,10 +19,9 @@ class Settings(BaseSettings):
     llm_model: str = "gemini-2.0-flash"
     llm_base_url: str | None = None
 
-    # Security
-    webhook_secret: str = ""  # shared secret to validate webhook requests
-    admin_secret: str = ""    # secret for admin panel access
-    allowed_origins: str = "https://support.listen.doctor"  # comma-separated origins for iframe
+    # Bot identity (#16: configurable, not hardcoded)
+    company_name: str = "Your Company"
+    assistant_name: str = "Support Assistant"
 
     # Database
     database_url: str = "postgresql://postgres:password@localhost:5432/wootbot"
@@ -26,7 +30,7 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.65
     max_context_messages: int = 10
     handoff_message: str = "I'm transferring you to a human agent. One moment please. / Te transfiero con un agente humano. Un momento por favor."
-    greeting_message: str = "Hello! I'm the support assistant. How can I help you? / ¡Hola! Soy el asistente de soporte. ¿En qué puedo ayudarte?"
+    greeting_message: str = "Hello! I'm the support assistant. How can I help you? / Hola! Soy el asistente de soporte. En que puedo ayudarte?"
 
     # Email formatting
     email_greeting: str = "Hola, gracias por contactar con nosotros."

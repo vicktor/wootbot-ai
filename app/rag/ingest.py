@@ -1,6 +1,9 @@
+import ipaddress
+import socket
 import structlog
-import requests
+import httpx
 from pathlib import Path
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from app.config import get_settings
@@ -58,13 +61,36 @@ async def ingest_text(content: str, source: str, title: str = None) -> int:
         session.close()
 
 
+def _is_safe_url(url: str) -> bool:
+    """#2: Validate URL to prevent SSRF — reject private/internal IPs."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if not parsed.hostname:
+        return False
+    try:
+        resolved = socket.getaddrinfo(parsed.hostname, None)
+        for entry in resolved:
+            ip = ipaddress.ip_address(entry[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+    except (socket.gaierror, ValueError):
+        return False
+    return True
+
+
 async def ingest_url(url: str, title: str = None) -> int:
     """Fetch and ingest content from a URL."""
+    if not _is_safe_url(url):
+        raise ValueError(f"URL not allowed (private/internal address): {url}")
+
     try:
-        response = requests.get(url, timeout=30, headers={
-            "User-Agent": "WootBot/1.0 Knowledge Ingester"
-        })
-        response.raise_for_status()
+        # #13: Use async httpx instead of sync requests
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=30, headers={
+                "User-Agent": "WootBot/1.0 Knowledge Ingester"
+            })
+            response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
         for tag in soup(["script", "style", "nav", "footer", "header"]):
@@ -74,6 +100,8 @@ async def ingest_url(url: str, title: str = None) -> int:
         page_title = title or (soup.title.string if soup.title else url)
 
         return await ingest_text(text, source=url, title=page_title)
+    except ValueError:
+        raise
     except Exception as e:
         logger.error("ingest_url_error", url=url, error=str(e))
         raise

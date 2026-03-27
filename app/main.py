@@ -1,3 +1,4 @@
+import hmac
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
@@ -15,6 +16,12 @@ chatwoot = ChatwootClient()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # #3: Warn loudly if secrets are not configured
+    settings = get_settings()
+    if not settings.webhook_secret:
+        logger.critical("WEBHOOK_SECRET is not set — webhook endpoint is unauthenticated!")
+    if not settings.admin_secret:
+        logger.critical("ADMIN_SECRET is not set — admin panel is unauthenticated!")
     logger.info("wootbot_starting")
     init_db()
     yield
@@ -85,7 +92,6 @@ async def process_message(conversation_id: int, message_content: str, contact_in
         if is_handoff:
             reason = reasoning or f"Low confidence ({confidence}), similarity={top_similarity:.2f}"
             if is_email:
-                # For email: don't send anything to the customer, just open for agents
                 await chatwoot.silent_handoff(conversation_id, reason=reason)
                 logger.info("email_silent_handoff", conversation_id=conversation_id, reason=reason)
             else:
@@ -96,12 +102,10 @@ async def process_message(conversation_id: int, message_content: str, contact_in
             if is_email:
                 greeting = get_bot_setting("email_greeting", settings.email_greeting)
                 closing = get_bot_setting("email_closing", settings.email_closing)
-                # Normalize \n from .env (stored as literal backslash-n)
                 closing = closing.replace("\\n", "\n") if closing else ""
                 if greeting or closing:
                     translated_greeting = await llm.translate(greeting, detected_lang) if greeting else ""
                     translated_closing = await llm.translate(closing, detected_lang) if closing else ""
-                    # Chatwoot email only renders \n\n as line breaks, not single \n
                     translated_closing = translated_closing.replace("\n", "\n\n") if translated_closing else ""
                     parts = []
                     if translated_greeting:
@@ -115,7 +119,7 @@ async def process_message(conversation_id: int, message_content: str, contact_in
             await chatwoot.send_message(conversation_id, response_text)
 
             # 8. Add private note with metadata for agents
-            note = f"🤖 Confidence: {confidence} | Similarity: {top_similarity:.2f} | Sources: {sources}"
+            note = f"Confidence: {confidence} | Similarity: {top_similarity:.2f} | Sources: {sources}"
             if reasoning:
                 note += f"\nReasoning: {reasoning}"
             await chatwoot.send_message(conversation_id, note, private=True)
@@ -144,7 +148,8 @@ async def process_message(conversation_id: int, message_content: str, contact_in
     except Exception as e:
         logger.error("process_message_error", conversation_id=conversation_id, error=str(e))
         try:
-            await chatwoot.handoff_to_agent(conversation_id, reason=f"Bot error: {str(e)[:100]}")
+            # #8: Generic error message — don't leak internal details
+            await chatwoot.handoff_to_agent(conversation_id, reason="Bot encountered an internal error")
         except Exception:
             logger.error("handoff_fallback_error", conversation_id=conversation_id)
 
@@ -153,9 +158,11 @@ async def process_message(conversation_id: int, message_content: str, contact_in
 async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
     """Receive webhook events from Chatwoot."""
     settings = get_settings()
+
+    # #3 + #5: Validate webhook secret with constant-time comparison
     if settings.webhook_secret:
-        token = request.headers.get("X-Webhook-Secret") or request.query_params.get("secret")
-        if token != settings.webhook_secret:
+        token = request.headers.get("X-Webhook-Secret") or request.query_params.get("secret") or ""
+        if not hmac.compare_digest(token, settings.webhook_secret):
             logger.warning("webhook_unauthorized", ip=request.client.host)
             raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -163,7 +170,6 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
 
     event_type = payload.get("event")
 
-    # Only process incoming customer messages
     if event_type == "message_created":
         message = payload.get("content", "")
         message_type = payload.get("message_type")
@@ -171,32 +177,31 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
         conversation_id = conversation.get("id")
         sender = payload.get("sender", {})
 
-        # Skip: outgoing messages (from agents/bot), private notes, empty messages
-        if message_type != "incoming" or not message or not conversation_id:
+        # #21: Validate conversation_id type
+        if not isinstance(conversation_id, int) or conversation_id <= 0:
             return {"status": "skipped"}
 
-        # Skip if sender is an agent (not a contact)
+        if message_type != "incoming" or not message:
+            return {"status": "skipped"}
+
         if sender.get("type") == "user":
             return {"status": "skipped_agent"}
 
         channel = conversation.get("channel")
         logger.info("incoming_message", conversation_id=conversation_id, channel=channel, message=message[:80])
 
-        # Extract contact info for personalized responses
         contact_info = {
             "name": sender.get("name"),
             "email": sender.get("email"),
             "phone": sender.get("phone_number"),
         }
 
-        # Process in background to return 200 quickly
         background_tasks.add_task(process_message, conversation_id, message, contact_info, channel)
 
     elif event_type == "conversation_created":
         conversation = payload.get("conversation", {})
         conversation_id = conversation.get("id")
-        if conversation_id:
-            settings = get_settings()
+        if isinstance(conversation_id, int) and conversation_id > 0:
             background_tasks.add_task(
                 chatwoot.send_message, conversation_id, settings.greeting_message
             )

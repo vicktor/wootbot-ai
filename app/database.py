@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from sqlalchemy import text
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, func
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -40,15 +42,20 @@ class ConversationLog(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+# #7: Cache engine and session factory to avoid connection leaks
+@lru_cache
 def get_engine():
     settings = get_settings()
-    return create_engine(settings.database_url)
+    return create_engine(settings.database_url, pool_pre_ping=True)
+
+
+@lru_cache
+def _get_session_factory():
+    return sessionmaker(bind=get_engine())
 
 
 def get_session() -> Session:
-    engine = get_engine()
-    SessionLocal = sessionmaker(bind=engine)
-    return SessionLocal()
+    return _get_session_factory()()
 
 
 def get_bot_setting(key: str, default: str = "") -> str:

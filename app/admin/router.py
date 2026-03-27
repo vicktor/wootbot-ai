@@ -1,8 +1,9 @@
+import hmac
 import os
 import tempfile
 import structlog
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.rag.ingest import (
@@ -13,24 +14,38 @@ from app.rag.ingest import (
 from app.database import get_session, ConversationLog, get_bot_setting, set_bot_setting
 from app.config import get_settings
 
+logger = structlog.get_logger()
+
+MAX_FILE_SIZE = 50 * 1024 * 1024  # #14: 50MB limit
+
+
+# ── Auth ────────────────────────────────────────────────────────────
+
 def _get_admin_secret():
     return get_settings().admin_secret
 
 
-async def verify_admin(request):
-    """Check auth via cookie, query param, or header."""
+async def verify_admin(request: Request):
+    """Check auth via cookie or header."""
     secret = _get_admin_secret()
     if not secret:
         return True
     token = (
         request.cookies.get("wootbot_admin")
         or request.headers.get("X-Admin-Secret")
-        or request.query_params.get("secret")
+        or ""
     )
-    return token == secret
+    # #5: Constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(token, secret)
 
-logger = structlog.get_logger()
-router = APIRouter(prefix="/admin")
+
+# #1: Apply auth as dependency on the entire router
+async def require_admin(request: Request):
+    if not await verify_admin(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
 class IngestURLRequest(BaseModel):
@@ -72,8 +87,12 @@ async def api_ingest_file(
     if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported file type: {ext}. Supported: {', '.join(SUPPORTED_EXTENSIONS)}")
 
+    # #14: Enforce file size limit
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(413, f"File too large. Maximum: {MAX_FILE_SIZE // (1024*1024)}MB")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
@@ -87,6 +106,9 @@ async def api_ingest_file(
 @router.post("/ingest/tickets")
 async def api_ingest_tickets(max_pages: int = 10):
     """Ingest resolved Chatwoot tickets into the knowledge base."""
+    # #22: Bound max_pages
+    if max_pages < 1 or max_pages > 100:
+        raise HTTPException(400, "max_pages must be between 1 and 100")
     count = await ingest_resolved_tickets(max_pages=max_pages)
     return {"status": "ok", "chunks_ingested": count}
 
@@ -153,6 +175,23 @@ async def api_update_settings(req: UpdateSettingsRequest):
     return {"status": "ok", "updated": updated}
 
 
+# #4: POST-based login to avoid secret in URL/logs
+@router.post("/login")
+async def admin_login(request: Request):
+    """Authenticate and set cookie without exposing secret in URL."""
+    body = await request.json()
+    secret = body.get("secret", "")
+    admin_secret = _get_admin_secret()
+    if not admin_secret or hmac.compare_digest(secret, admin_secret):
+        response = HTMLResponse('{"status":"ok"}', status_code=200)
+        response.set_cookie(
+            "wootbot_admin", secret,
+            httponly=True, secure=True, max_age=86400, samesite="lax"  # #9: secure=True
+        )
+        return response
+    raise HTTPException(status_code=401, detail="Invalid secret")
+
+
 # ── Admin UI (embeddable as Chatwoot Dashboard App) ──────────────────
 
 def _frame_ancestors():
@@ -162,26 +201,26 @@ def _frame_ancestors():
     return "frame-ancestors 'self' " + " ".join(origins) if origins else "frame-ancestors 'self'"
 
 
-def _secure_response(html: str, secret: str = None) -> HTMLResponse:
+def _secure_response(html: str) -> HTMLResponse:
     """Return HTML response with iframe security headers."""
     response = HTMLResponse(html)
+    # #19: Only use CSP frame-ancestors (modern), drop conflicting X-Frame-Options
     response.headers["Content-Security-Policy"] = _frame_ancestors()
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
-    if secret:
-        response.set_cookie("wootbot_admin", secret, httponly=True, max_age=86400, samesite="lax")
     return response
 
 
-@router.get("/ui", response_class=HTMLResponse)
+# UI endpoint is exempt from router-level auth — it handles its own auth + login page
+@router.get("/ui", response_class=HTMLResponse, dependencies=[])
 async def admin_ui(request: Request):
     admin_secret = _get_admin_secret()
     if not admin_secret:
         return _secure_response(ADMIN_HTML)
     if await verify_admin(request):
-        secret = request.query_params.get("secret") or request.cookies.get("wootbot_admin")
-        return _secure_response(ADMIN_HTML, secret=secret)
+        return _secure_response(ADMIN_HTML)
     return _secure_response(LOGIN_HTML)
 
+
+# #4: Login page uses POST form — secret never in URL
 LOGIN_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WootBot Admin - Login</title>
@@ -201,10 +240,18 @@ button:hover{background:#1e40af}
 <p class="err" id="err">Invalid secret</p>
 </div>
 <script>
-function login(){
+const API = window.location.origin + '/wootbot';
+async function login(){
   const s=document.getElementById('secret').value;
   if(!s)return;
-  window.location.href=window.location.pathname+'?secret='+encodeURIComponent(s);
+  try {
+    const r = await fetch(API + '/admin/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({secret: s})
+    });
+    if(r.ok) { window.location.reload(); }
+    else { document.getElementById('err').style.display='block'; }
+  } catch(e) { document.getElementById('err').style.display='block'; }
 }
 document.getElementById('secret').addEventListener('keypress',e=>{if(e.key==='Enter')login()});
 </script></body></html>"""
@@ -260,7 +307,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 </head>
 <body>
 
-<h1>🤖 WootBot AI</h1>
+<h1>WootBot AI</h1>
 <p class="subtitle">Knowledge Base Manager</p>
 
 <!-- Stats -->
@@ -288,8 +335,8 @@ ADMIN_HTML = """<!DOCTYPE html>
   <div id="tab-file" class="tab-content active">
     <div class="file-drop" id="file-drop">
       <input type="file" id="file-input" accept=".pdf,.docx,.md,.txt,.csv">
-      <p>📄 Drop a file here or click to browse</p>
-      <p class="formats">PDF, DOCX, MD, TXT, CSV</p>
+      <p>Drop a file here or click to browse</p>
+      <p class="formats">PDF, DOCX, MD, TXT, CSV (max 50MB)</p>
     </div>
     <label>Title (optional)</label>
     <input type="text" id="file-title" placeholder="Document title">
@@ -316,7 +363,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
   <div id="tab-tickets" class="tab-content">
     <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Import resolved Chatwoot conversations into the knowledge base. The bot will learn from successfully handled tickets.</p>
-    <label>Max pages to fetch (25 tickets per page)</label>
+    <label>Max pages to fetch (25 tickets per page, max 100)</label>
     <input type="text" id="tickets-pages" placeholder="10" value="10">
     <button class="btn btn-primary" id="btn-tickets" onclick="ingestTickets()">Import Resolved Tickets</button>
   </div>
@@ -363,10 +410,10 @@ dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
   fileInput.files = e.dataTransfer.files;
-  dropZone.querySelector('p').textContent = '📎 ' + fileInput.files[0].name;
+  dropZone.querySelector('p').textContent = fileInput.files[0].name;
 });
 fileInput.addEventListener('change', () => {
-  if (fileInput.files.length) dropZone.querySelector('p').textContent = '📎 ' + fileInput.files[0].name;
+  if (fileInput.files.length) dropZone.querySelector('p').textContent = fileInput.files[0].name;
 });
 
 function toast(msg, type = 'success') {
@@ -389,6 +436,13 @@ function setLoading(btnId, loading) {
   }
 }
 
+// #10: Escape both HTML entities AND single quotes to prevent XSS
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML.replace(/'/g, '&#39;');
+}
+
 async function uploadFile() {
   const file = fileInput.files[0];
   if (!file) return toast('Select a file first', 'error');
@@ -401,9 +455,9 @@ async function uploadFile() {
     const r = await fetch(API + '/admin/ingest/file', { method: 'POST', body: form });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Upload failed');
-    toast(`Ingested ${data.chunks_ingested} chunks from ${file.name}`);
+    toast('Ingested ' + data.chunks_ingested + ' chunks from ' + file.name);
     fileInput.value = '';
-    dropZone.querySelector('p').textContent = '📄 Drop a file here or click to browse';
+    dropZone.querySelector('p').textContent = 'Drop a file here or click to browse';
     document.getElementById('file-title').value = '';
     loadDocs(); loadStats();
   } catch(e) { toast(e.message, 'error'); }
@@ -422,7 +476,7 @@ async function ingestURL() {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Ingest failed');
-    toast(`Ingested ${data.chunks_ingested} chunks from URL`);
+    toast('Ingested ' + data.chunks_ingested + ' chunks from URL');
     document.getElementById('url-input').value = '';
     document.getElementById('url-title').value = '';
     loadDocs(); loadStats();
@@ -443,7 +497,7 @@ async function ingestText() {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Ingest failed');
-    toast(`Ingested ${data.chunks_ingested} chunks`);
+    toast('Ingested ' + data.chunks_ingested + ' chunks');
     document.getElementById('text-content').value = '';
     document.getElementById('text-source').value = '';
     document.getElementById('text-title').value = '';
@@ -459,7 +513,7 @@ async function ingestTickets() {
     const r = await fetch(API + '/admin/ingest/tickets?max_pages=' + maxPages, { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Ticket import failed');
-    toast(`Ingested ${data.chunks_ingested} chunks from resolved tickets`);
+    toast('Ingested ' + data.chunks_ingested + ' chunks from resolved tickets');
     loadDocs(); loadStats();
   } catch(e) { toast(e.message, 'error'); }
   setLoading('btn-tickets', false);
@@ -473,7 +527,7 @@ async function deleteDoc(source) {
       body: JSON.stringify({ source })
     });
     const data = await r.json();
-    toast(`Deleted ${data.chunks_deleted} chunks`);
+    toast('Deleted ' + data.chunks_deleted + ' chunks');
     loadDocs(); loadStats();
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -488,12 +542,12 @@ async function loadDocs() {
       return;
     }
     tbody.innerHTML = data.sources.map(s =>
-      `<tr>
-        <td><strong>${esc(s.title)}</strong></td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6b7280">${esc(s.source)}</td>
-        <td>${s.chunks}</td>
-        <td><button class="btn btn-danger" onclick="deleteDoc('${esc(s.source)}')">Delete</button></td>
-      </tr>`
+      '<tr>' +
+        '<td><strong>' + esc(s.title) + '</strong></td>' +
+        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6b7280">' + esc(s.source) + '</td>' +
+        '<td>' + s.chunks + '</td>' +
+        '<td><button class="btn btn-danger" onclick="deleteDoc(\'' + esc(s.source) + '\')">Delete</button></td>' +
+      '</tr>'
     ).join('');
   } catch(e) { console.error(e); }
 }
@@ -536,18 +590,9 @@ async function saveSettings() {
   setLoading('btn-settings', false);
 }
 
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
 loadDocs();
 loadStats();
 loadSettings();
 </script>
 </body>
 </html>"""
-
-# Override the router to add auth middleware for all API endpoints
-from starlette.middleware.base import BaseHTTPMiddleware
-
-class AdminAuthMiddleware:
-    """Middleware-like check - add to each endpoint or use Depends."""
-    pass

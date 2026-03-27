@@ -1,6 +1,8 @@
 import json
+import asyncio
 import structlog
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from app.config import get_settings
 
 logger = structlog.get_logger()
@@ -65,9 +67,10 @@ def _build_prompt(question: str, context: str, history: list[dict] = None, conta
     """Build the full prompt with system message, context, history and question."""
     settings = get_settings()
 
+    # #16: Use configurable company/assistant names
     system = SYSTEM_PROMPT.format(
-        assistant_name="Support Assistant",
-        company="Listen.Doctor",
+        assistant_name=settings.assistant_name,
+        company=settings.company_name,
         contact_context=build_contact_context(contact_info),
         custom_instructions="",
     )
@@ -149,10 +152,12 @@ class GeminiProvider(LLMProvider):
         self.model_name = settings.llm_model
         self.embed_model = "gemini-embedding-001"
 
+    # #6: Wrap sync google-genai calls with asyncio.to_thread
     async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
         prompt = _build_prompt(question, context, history, contact_info, channel)
         try:
-            response = self.client.models.generate_content(
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name, contents=prompt
             )
             return _parse_llm_response(response.text)
@@ -161,7 +166,8 @@ class GeminiProvider(LLMProvider):
             return ERROR_RESPONSE
 
     async def get_embedding(self, text: str) -> list[float]:
-        result = self.client.models.embed_content(
+        result = await asyncio.to_thread(
+            self.client.models.embed_content,
             model=self.embed_model, contents=text
         )
         return result.embeddings[0].values
@@ -169,7 +175,8 @@ class GeminiProvider(LLMProvider):
     async def translate(self, text: str, target_lang: str) -> str:
         prompt = TRANSLATE_PROMPT.format(lang=target_lang, text=text)
         try:
-            response = self.client.models.generate_content(
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
                 model=self.model_name, contents=prompt
             )
             return response.text.strip()
@@ -200,9 +207,10 @@ class OpenAIProvider(LLMProvider):
             logger.error("llm_generation_error", error=str(e))
             return ERROR_RESPONSE
 
+    # #11: Use OpenAI's own embedding model, not gemini
     async def get_embedding(self, text: str) -> list[float]:
         response = await self.client.embeddings.create(
-            model="gemini-embedding-001", input=text
+            model="text-embedding-3-large", input=text
         )
         return response.data[0].embedding
 
@@ -221,9 +229,13 @@ class OpenAIProvider(LLMProvider):
 class AnthropicProvider(LLMProvider):
     def __init__(self):
         import anthropic
+        from google import genai
         settings = get_settings()
         self.client = anthropic.AsyncAnthropic(api_key=settings.llm_api_key)
         self.model = settings.llm_model or "claude-sonnet-4-20250514"
+        # #12: Embeddings need a Google API key — use embedding_api_key or warn
+        embedding_key = settings.llm_base_url or settings.llm_api_key
+        self._genai_client = genai.Client(api_key=embedding_key)
 
     async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
         prompt = _build_prompt(question, context, history, contact_info, channel)
@@ -237,11 +249,10 @@ class AnthropicProvider(LLMProvider):
             logger.error("llm_generation_error", error=str(e))
             return ERROR_RESPONSE
 
+    # #6 + #12: Wrap sync genai call, reuse client from __init__
     async def get_embedding(self, text: str) -> list[float]:
-        from google import genai
-        settings = get_settings()
-        client = genai.Client(api_key=settings.llm_api_key)
-        result = client.models.embed_content(
+        result = await asyncio.to_thread(
+            self._genai_client.models.embed_content,
             model="gemini-embedding-001", contents=text
         )
         return result.embeddings[0].values
@@ -258,6 +269,8 @@ class AnthropicProvider(LLMProvider):
             return text
 
 
+# #20: Cache provider instance to avoid re-creating clients on every request
+@lru_cache
 def get_llm_provider() -> LLMProvider:
     settings = get_settings()
     providers = {
