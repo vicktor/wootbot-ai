@@ -70,6 +70,25 @@ class ChatwootClient:
             logger.info("handoff_to_agent", conversation_id=conversation_id, reason=reason)
             return response.json()
 
+    async def silent_handoff(self, conversation_id: int, reason: str = None) -> dict:
+        """Open conversation for agents without sending any message to the customer."""
+        if reason:
+            await self.send_message(
+                conversation_id,
+                f"🤖 Bot handoff reason: {reason}",
+                private=True,
+            )
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self._url(f"/conversations/{conversation_id}/toggle_status"),
+                headers=self.headers,
+                json={"status": "open"},
+            )
+            response.raise_for_status()
+            logger.info("silent_handoff", conversation_id=conversation_id, reason=reason)
+            return response.json()
+
     async def get_messages(self, conversation_id: int) -> list[dict]:
         """Get conversation messages for context."""
         async with httpx.AsyncClient() as client:

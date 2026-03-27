@@ -10,7 +10,7 @@ from app.rag.ingest import (
     get_document_stats, delete_document_by_source,
     SUPPORTED_EXTENSIONS,
 )
-from app.database import get_session, ConversationLog
+from app.database import get_session, ConversationLog, get_bot_setting, set_bot_setting
 from app.config import get_settings
 
 ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
@@ -126,6 +126,34 @@ async def api_stats():
         }
     finally:
         session.close()
+
+
+SETTING_KEYS = {"email_greeting", "email_closing"}
+
+
+@router.get("/settings")
+async def api_get_settings():
+    settings = get_settings()
+    return {
+        key: get_bot_setting(key, getattr(settings, key, ""))
+        for key in SETTING_KEYS
+    }
+
+
+class UpdateSettingsRequest(BaseModel):
+    email_greeting: str | None = None
+    email_closing: str | None = None
+
+
+@router.put("/settings")
+async def api_update_settings(req: UpdateSettingsRequest):
+    updated = []
+    for key in SETTING_KEYS:
+        value = getattr(req, key, None)
+        if value is not None:
+            set_bot_setting(key, value)
+            updated.append(key)
+    return {"status": "ok", "updated": updated}
 
 
 # ── Admin UI (embeddable as Chatwoot Dashboard App) ──────────────────
@@ -247,6 +275,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class="tab" data-tab="tab-url">URL</div>
     <div class="tab" data-tab="tab-text">Text</div>
     <div class="tab" data-tab="tab-tickets">Chatwoot Tickets</div>
+    <div class="tab" data-tab="tab-settings">Settings</div>
   </div>
 
   <div id="tab-file" class="tab-content active">
@@ -283,6 +312,15 @@ ADMIN_HTML = """<!DOCTYPE html>
     <label>Max pages to fetch (25 tickets per page)</label>
     <input type="text" id="tickets-pages" placeholder="10" value="10">
     <button class="btn btn-primary" id="btn-tickets" onclick="ingestTickets()">Import Resolved Tickets</button>
+  </div>
+
+  <div id="tab-settings" class="tab-content">
+    <p style="color:#6b7280;font-size:0.85rem;margin-bottom:12px">Email formatting settings. The greeting and closing are automatically translated by the AI to the customer's language.</p>
+    <label>Email Greeting</label>
+    <input type="text" id="set-email-greeting" placeholder="Hola, gracias por contactar con nosotros.">
+    <label>Email Closing</label>
+    <textarea id="set-email-closing" placeholder="Esperamos haber sido de ayuda..."></textarea>
+    <button class="btn btn-primary" id="btn-settings" onclick="saveSettings()">Save Settings</button>
   </div>
 </div>
 
@@ -465,10 +503,37 @@ async function loadStats() {
   } catch(e) { console.error(e); }
 }
 
+async function loadSettings() {
+  try {
+    const r = await fetch(API + '/admin/settings');
+    const d = await r.json();
+    document.getElementById('set-email-greeting').value = d.email_greeting || '';
+    document.getElementById('set-email-closing').value = d.email_closing || '';
+  } catch(e) { console.error(e); }
+}
+
+async function saveSettings() {
+  setLoading('btn-settings', true);
+  try {
+    const r = await fetch(API + '/admin/settings', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        email_greeting: document.getElementById('set-email-greeting').value,
+        email_closing: document.getElementById('set-email-closing').value,
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Save failed');
+    toast('Settings saved');
+  } catch(e) { toast(e.message, 'error'); }
+  setLoading('btn-settings', false);
+}
+
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 loadDocs();
 loadStats();
+loadSettings();
 </script>
 </body>
 </html>"""

@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     handoff_message: str = "I'm transferring you to a human agent. One moment please. / Te transfiero con un agente humano. Un momento por favor."
     greeting_message: str = "Hello! I'm the support assistant. How can I help you? / ¡Hola! Soy el asistente de soporte. ¿En qué puedo ayudarte?"
 
+    # Email formatting
+    email_greeting: str = "Hola, gracias por contactar con nosotros."
+    email_closing: str = "Esperamos haber sido de ayuda. Si necesitas cualquier otra cosa, estaremos encantados de ayudarte.\nUn cordial saludo,\nEquipo de Soporte"
+
     # RAG
     chunk_size: int = 500
     chunk_overlap: int = 50

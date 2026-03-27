@@ -31,7 +31,7 @@ app = FastAPI(
 
 # ── Webhook Handler ──────────────────────────────────────────────────
 
-async def process_message(conversation_id: int, message_content: str, contact_info: dict = None):
+async def process_message(conversation_id: int, message_content: str, contact_info: dict = None, channel: str = None):
     """Core bot logic: RAG search → LLM generation → response."""
     settings = get_settings()
     llm = get_llm_provider()
@@ -53,6 +53,7 @@ async def process_message(conversation_id: int, message_content: str, contact_in
             context=context,
             history=history,
             contact_info=contact_info,
+            channel=channel,
         )
 
         response_text = result.get("response", "")
@@ -70,27 +71,34 @@ async def process_message(conversation_id: int, message_content: str, contact_in
             or (confidence_score < settings.confidence_threshold and top_similarity < 0.5)
         )
 
+        is_email = channel and "email" in channel.lower()
+
         if is_handoff:
             reason = reasoning or f"Low confidence ({confidence}), similarity={top_similarity:.2f}"
-            await chatwoot.handoff_to_agent(conversation_id, reason=reason, language=detected_lang)
-            logger.info("handoff", conversation_id=conversation_id, reason=reason, lang=detected_lang)
+            if is_email:
+                # For email: don't send anything to the customer, just open for agents
+                await chatwoot.silent_handoff(conversation_id, reason=reason)
+                logger.info("email_silent_handoff", conversation_id=conversation_id, reason=reason)
+            else:
+                await chatwoot.handoff_to_agent(conversation_id, reason=reason, language=detected_lang)
+                logger.info("handoff", conversation_id=conversation_id, reason=reason, lang=detected_lang)
         else:
             # 6. Send AI response
             await chatwoot.send_message(conversation_id, response_text)
 
-            # 7. Add private note with metadata for agents
+            # 8. Add private note with metadata for agents
             note = f"🤖 Confidence: {confidence} | Similarity: {top_similarity:.2f} | Sources: {sources}"
             if reasoning:
                 note += f"\nReasoning: {reasoning}"
             await chatwoot.send_message(conversation_id, note, private=True)
 
-            # 8. Label conversation
+            # 9. Label conversation
             labels = ["bot-handled"]
             if confidence == "HIGH":
                 labels.append("bot-confident")
             await chatwoot.set_conversation_labels(conversation_id, labels)
 
-        # 9. Log for analytics
+        # 10. Log for analytics
         session = get_session()
         try:
             log = ConversationLog(
@@ -136,7 +144,8 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
         if sender.get("type") == "user":
             return {"status": "skipped_agent"}
 
-        logger.info("incoming_message", conversation_id=conversation_id, message=message[:80])
+        channel = conversation.get("channel")
+        logger.info("incoming_message", conversation_id=conversation_id, channel=channel, message=message[:80])
 
         # Extract contact info for personalized responses
         contact_info = {
@@ -146,7 +155,7 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
         }
 
         # Process in background to return 200 quickly
-        background_tasks.add_task(process_message, conversation_id, message, contact_info)
+        background_tasks.add_task(process_message, conversation_id, message, contact_info, channel)
 
     elif event_type == "conversation_created":
         conversation = payload.get("conversation", {})

@@ -56,14 +56,29 @@ def build_contact_context(contact_info: dict = None) -> str:
     return "[Contact Information]\n" + "\n".join(lines) + "\n\n"
 
 
-def _build_prompt(question: str, context: str, history: list[dict] = None, contact_info: dict = None) -> str:
+def _build_prompt(question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> str:
     """Build the full prompt with system message, context, history and question."""
     settings = get_settings()
+
+    email_instructions = ""
+    is_email = channel and "email" in channel.lower()
+    if is_email:
+        from app.database import get_bot_setting
+        greeting = get_bot_setting("email_greeting", settings.email_greeting)
+        closing = get_bot_setting("email_closing", settings.email_closing)
+        if greeting or closing:
+            parts = []
+            if greeting:
+                parts.append(f"- Start the response with this greeting, translated to the customer's language: \"{greeting}\"")
+            if closing:
+                parts.append(f"- End the response with this closing, translated to the customer's language: \"{closing}\"")
+            email_instructions = "\n[Email Formatting]\nThis message comes from an email channel. Apply formal email formatting:\n" + "\n".join(parts) + "\n"
+
     system = SYSTEM_PROMPT.format(
         assistant_name="Support Assistant",
         company="Listen.Doctor",
         contact_context=build_contact_context(contact_info),
-        custom_instructions="",
+        custom_instructions=email_instructions,
     )
 
     history_text = ""
@@ -123,7 +138,7 @@ ERROR_RESPONSE = {
 
 class LLMProvider(ABC):
     @abstractmethod
-    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None) -> dict:
+    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
         pass
 
     @abstractmethod
@@ -139,8 +154,8 @@ class GeminiProvider(LLMProvider):
         self.model_name = settings.llm_model
         self.embed_model = "gemini-embedding-001"
 
-    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None) -> dict:
-        prompt = _build_prompt(question, context, history, contact_info)
+    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
+        prompt = _build_prompt(question, context, history, contact_info, channel)
         try:
             response = self.client.models.generate_content(
                 model=self.model_name, contents=prompt
@@ -167,8 +182,8 @@ class OpenAIProvider(LLMProvider):
         self.client = AsyncOpenAI(**kwargs)
         self.model = settings.llm_model
 
-    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None) -> dict:
-        prompt = _build_prompt(question, context, history, contact_info)
+    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
+        prompt = _build_prompt(question, context, history, contact_info, channel)
         messages = [{"role": "user", "content": prompt}]
         try:
             response = await self.client.chat.completions.create(
@@ -193,8 +208,8 @@ class AnthropicProvider(LLMProvider):
         self.client = anthropic.AsyncAnthropic(api_key=settings.llm_api_key)
         self.model = settings.llm_model or "claude-sonnet-4-20250514"
 
-    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None) -> dict:
-        prompt = _build_prompt(question, context, history, contact_info)
+    async def generate(self, question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> dict:
+        prompt = _build_prompt(question, context, history, contact_info, channel)
         messages = [{"role": "user", "content": prompt}]
         try:
             response = await self.client.messages.create(

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/victor/Downloads/chatwoot-ai-bot -type f \\\\\\(-name requirements.txt -o -name pyproject.toml -o -name *.toml -o -name *.lock -o -name *.txt \\\\\\))",
+      "Bash(find /Users/victor/Downloads/chatwoot-ai-bot -type f \\\\\\(-name *.md -o -name *.txt -o -name .cursor* -o -name *.yml -o -name *.yaml \\\\\\))",
+      "Bash(find /Users/victor/Downloads/chatwoot-ai-bot -type f \\\\\\(-name README* -o -name *.md \\\\\\))",
+      "Bash(ls:*)",
+      "WebSearch",
+      "Bash(python:*)"
+    ]
+  }
+}
