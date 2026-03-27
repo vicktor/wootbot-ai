@@ -178,33 +178,16 @@ async def api_update_settings(req: UpdateSettingsRequest):
 
 @public_router.post("/login")
 async def admin_login(request: Request):
-    """Authenticate and set cookie without exposing secret in URL."""
+    """Validate secret — client stores it and sends as header on future requests."""
     body = await request.json()
     secret = body.get("secret", "")
     admin_secret = _get_admin_secret()
     if not admin_secret or hmac.compare_digest(secret, admin_secret):
-        response = HTMLResponse('{"status":"ok"}', status_code=200)
-        _set_auth_cookie(response, secret, request)
-        return response
+        return {"status": "ok"}
     raise HTTPException(status_code=401, detail="Invalid secret")
 
 
 # ── Admin UI (embeddable as Chatwoot Dashboard App) ──────────────────
-
-def _is_https(request: Request) -> bool:
-    """Check if the request came over HTTPS (directly or via proxy)."""
-    if request.url.scheme == "https":
-        return True
-    return request.headers.get("X-Forwarded-Proto", "") == "https"
-
-
-def _set_auth_cookie(response, secret: str, request: Request):
-    """Set the admin auth cookie with correct secure flag."""
-    response.set_cookie(
-        "wootbot_admin", secret,
-        httponly=True, secure=_is_https(request), max_age=86400, samesite="lax", path="/"
-    )
-
 
 def _frame_ancestors():
     """Build CSP frame-ancestors from allowed_origins setting."""
@@ -216,28 +199,27 @@ def _frame_ancestors():
 def _secure_response(html: str) -> HTMLResponse:
     """Return HTML response with iframe security headers."""
     response = HTMLResponse(html)
-    # #19: Only use CSP frame-ancestors (modern), drop conflicting X-Frame-Options
     response.headers["Content-Security-Policy"] = _frame_ancestors()
     return response
 
 
 @public_router.get("/ui", response_class=HTMLResponse)
 async def admin_ui(request: Request):
+    """Serve admin UI. Auth is handled client-side via X-Admin-Secret header."""
     admin_secret = _get_admin_secret()
     if not admin_secret:
         return _secure_response(ADMIN_HTML)
 
-    # Accept ?secret= on initial load (for Chatwoot Dashboard App iframe)
-    # Set cookie and serve the page — JS will clean the URL
+    # If ?secret= in URL, serve the admin page (JS will capture and store it)
     query_secret = request.query_params.get("secret", "")
     if query_secret and hmac.compare_digest(query_secret, admin_secret):
-        response = _secure_response(ADMIN_HTML)
-        _set_auth_cookie(response, query_secret, request)
-        return response
+        return _secure_response(ADMIN_HTML)
 
-    # Check cookie/header auth
+    # If already authenticated via header/cookie
     if await verify_admin(request):
         return _secure_response(ADMIN_HTML)
+
+    # Show login page
     return _secure_response(LOGIN_HTML)
 
 
@@ -270,7 +252,10 @@ async function login(){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({secret: s})
     });
-    if(r.ok) { window.location.reload(); }
+    if(r.ok) {
+      sessionStorage.setItem('wootbot_secret', s);
+      window.location.reload();
+    }
     else { document.getElementById('err').style.display='block'; }
   } catch(e) { document.getElementById('err').style.display='block'; }
 }
@@ -409,12 +394,21 @@ ADMIN_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-// Strip secret from URL bar without reload
-if (window.location.search.includes('secret=')) {
+// Capture secret from URL or sessionStorage
+const params = new URLSearchParams(window.location.search);
+if (params.has('secret')) {
+  sessionStorage.setItem('wootbot_secret', params.get('secret'));
   window.history.replaceState({}, '', window.location.pathname);
 }
+const SECRET = sessionStorage.getItem('wootbot_secret') || '';
 
 const API = window.location.origin + '/wootbot';
+
+// Authenticated fetch helper
+function authFetch(url, opts = {}) {
+  opts.headers = Object.assign({'X-Admin-Secret': SECRET}, opts.headers || {});
+  return fetch(url, opts);
+}
 
 // Tabs
 document.querySelectorAll('.tab').forEach(tab => {
@@ -478,7 +472,7 @@ async function uploadFile() {
   if (title) form.append('title', title);
   setLoading('btn-file', true);
   try {
-    const r = await fetch(API + '/admin/ingest/file', { method: 'POST', body: form });
+    const r = await authFetch(API + '/admin/ingest/file', { method: 'POST', body: form });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Upload failed');
     toast('Ingested ' + data.chunks_ingested + ' chunks from ' + file.name);
@@ -496,7 +490,7 @@ async function ingestURL() {
   const title = document.getElementById('url-title').value || null;
   setLoading('btn-url', true);
   try {
-    const r = await fetch(API + '/admin/ingest/url', {
+    const r = await authFetch(API + '/admin/ingest/url', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ url, title })
     });
@@ -517,7 +511,7 @@ async function ingestText() {
   if (!content) return toast('Enter some text', 'error');
   setLoading('btn-text', true);
   try {
-    const r = await fetch(API + '/admin/ingest/text', {
+    const r = await authFetch(API + '/admin/ingest/text', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ content, source, title })
     });
@@ -536,7 +530,7 @@ async function ingestTickets() {
   const maxPages = parseInt(document.getElementById('tickets-pages').value) || 10;
   setLoading('btn-tickets', true);
   try {
-    const r = await fetch(API + '/admin/ingest/tickets?max_pages=' + maxPages, { method: 'POST' });
+    const r = await authFetch(API + '/admin/ingest/tickets?max_pages=' + maxPages, { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Ticket import failed');
     toast('Ingested ' + data.chunks_ingested + ' chunks from resolved tickets');
@@ -548,7 +542,7 @@ async function ingestTickets() {
 async function deleteDoc(source) {
   if (!confirm('Delete all chunks from this source?')) return;
   try {
-    const r = await fetch(API + '/admin/documents', {
+    const r = await authFetch(API + '/admin/documents', {
       method: 'DELETE', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ source })
     });
@@ -560,7 +554,7 @@ async function deleteDoc(source) {
 
 async function loadDocs() {
   try {
-    const r = await fetch(API + '/admin/documents');
+    const r = await authFetch(API + '/admin/documents');
     const data = await r.json();
     const tbody = document.getElementById('doc-table');
     if (!data.sources || !data.sources.length) {
@@ -580,7 +574,7 @@ async function loadDocs() {
 
 async function loadStats() {
   try {
-    const r = await fetch(API + '/admin/stats');
+    const r = await authFetch(API + '/admin/stats');
     const d = await r.json();
     document.getElementById('s-sources').textContent = d.knowledge_base_sources || 0;
     document.getElementById('s-chunks').textContent = d.knowledge_base_chunks || 0;
@@ -592,7 +586,7 @@ async function loadStats() {
 
 async function loadSettings() {
   try {
-    const r = await fetch(API + '/admin/settings');
+    const r = await authFetch(API + '/admin/settings');
     const d = await r.json();
     document.getElementById('set-email-greeting').value = d.email_greeting || '';
     document.getElementById('set-email-closing').value = d.email_closing || '';
@@ -602,7 +596,7 @@ async function loadSettings() {
 async function saveSettings() {
   setLoading('btn-settings', true);
   try {
-    const r = await fetch(API + '/admin/settings', {
+    const r = await authFetch(API + '/admin/settings', {
       method: 'PUT', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         email_greeting: document.getElementById('set-email-greeting').value,
