@@ -31,7 +31,7 @@ app = FastAPI(
 
 # ── Webhook Handler ──────────────────────────────────────────────────
 
-async def process_message(conversation_id: int, message_content: str):
+async def process_message(conversation_id: int, message_content: str, contact_info: dict = None):
     """Core bot logic: RAG search → LLM generation → response."""
     settings = get_settings()
     llm = get_llm_provider()
@@ -52,30 +52,36 @@ async def process_message(conversation_id: int, message_content: str):
             question=message_content,
             context=context,
             history=history,
+            contact_info=contact_info,
         )
 
-        answer = result.get("answer", "")
+        response_text = result.get("response", "")
         confidence = result.get("confidence", "LOW")
-        needs_handoff = result.get("needs_handoff", False)
-        handoff_reason = result.get("handoff_reason")
-
-        # 5. Confidence check — handoff if too low
-        confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.3}
-        confidence_score = confidence_map.get(confidence, 0.3)
-
+        reasoning = result.get("reasoning", "")
         detected_lang = result.get("detected_language", "en")
         sources = ", ".join(d.get("title", d["source"])[:50] for d in documents[:3]) if documents else ""
 
-        if needs_handoff or (confidence_score < settings.confidence_threshold and top_similarity < 0.5):
-            reason = handoff_reason or f"Low confidence ({confidence}), similarity={top_similarity:.2f}"
+        # 5. Confidence check — handoff if needed
+        confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.3}
+        confidence_score = confidence_map.get(confidence, 0.3)
+
+        is_handoff = (
+            response_text == "conversation_handoff"
+            or (confidence_score < settings.confidence_threshold and top_similarity < 0.5)
+        )
+
+        if is_handoff:
+            reason = reasoning or f"Low confidence ({confidence}), similarity={top_similarity:.2f}"
             await chatwoot.handoff_to_agent(conversation_id, reason=reason, language=detected_lang)
             logger.info("handoff", conversation_id=conversation_id, reason=reason, lang=detected_lang)
         else:
             # 6. Send AI response
-            await chatwoot.send_message(conversation_id, answer)
+            await chatwoot.send_message(conversation_id, response_text)
 
             # 7. Add private note with metadata for agents
             note = f"🤖 Confidence: {confidence} | Similarity: {top_similarity:.2f} | Sources: {sources}"
+            if reasoning:
+                note += f"\nReasoning: {reasoning}"
             await chatwoot.send_message(conversation_id, note, private=True)
 
             # 8. Label conversation
@@ -90,7 +96,7 @@ async def process_message(conversation_id: int, message_content: str):
             log = ConversationLog(
                 conversation_id=conversation_id,
                 question=message_content[:2000],
-                answer=answer[:2000],
+                answer=response_text[:2000],
                 confidence=confidence_score,
                 sources_used=sources or None,
             )
@@ -132,8 +138,15 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
 
         logger.info("incoming_message", conversation_id=conversation_id, message=message[:80])
 
+        # Extract contact info for personalized responses
+        contact_info = {
+            "name": sender.get("name"),
+            "email": sender.get("email"),
+            "phone": sender.get("phone_number"),
+        }
+
         # Process in background to return 200 quickly
-        background_tasks.add_task(process_message, conversation_id, message)
+        background_tasks.add_task(process_message, conversation_id, message, contact_info)
 
     elif event_type == "conversation_created":
         conversation = payload.get("conversation", {})
