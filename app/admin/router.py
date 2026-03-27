@@ -186,7 +186,7 @@ async def admin_login(request: Request):
         response = HTMLResponse('{"status":"ok"}', status_code=200)
         response.set_cookie(
             "wootbot_admin", secret,
-            httponly=True, secure=True, max_age=86400, samesite="lax"  # #9: secure=True
+            httponly=True, secure=True, max_age=86400, samesite="lax", path="/"
         )
         return response
     raise HTTPException(status_code=401, detail="Invalid secret")
@@ -215,6 +215,21 @@ async def admin_ui(request: Request):
     admin_secret = _get_admin_secret()
     if not admin_secret:
         return _secure_response(ADMIN_HTML)
+
+    # Accept ?secret= on initial load (for Chatwoot Dashboard App iframe)
+    # Set cookie and redirect to strip the secret from the URL
+    query_secret = request.query_params.get("secret", "")
+    if query_secret and hmac.compare_digest(query_secret, admin_secret):
+        # Build clean URL without the secret param
+        clean_url = str(request.url).split("?")[0]
+        response = RedirectResponse(url=clean_url, status_code=302)
+        response.set_cookie(
+            "wootbot_admin", query_secret,
+            httponly=True, secure=True, max_age=86400, samesite="lax", path="/"
+        )
+        return response
+
+    # Check cookie/header auth
     if await verify_admin(request):
         return _secure_response(ADMIN_HTML)
     return _secure_response(LOGIN_HTML)
