@@ -83,15 +83,9 @@ def set_bot_setting(key: str, value: str):
 
 
 def init_db():
-    """Create tables, enable pgvector extension, and create HNSW index."""
+    """Create tables and enable pgvector extension."""
     engine = get_engine()
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.commit()
     Base.metadata.create_all(engine)
-    with engine.connect() as conn:
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_documents_embedding
-            ON documents USING hnsw (embedding vector_cosine_ops)
-        """))
-        conn.commit()
