@@ -217,12 +217,10 @@ async def admin_ui(request: Request):
         return _secure_response(ADMIN_HTML)
 
     # Accept ?secret= on initial load (for Chatwoot Dashboard App iframe)
-    # Set cookie and redirect to strip the secret from the URL
+    # Set cookie and serve the page — JS will clean the URL
     query_secret = request.query_params.get("secret", "")
     if query_secret and hmac.compare_digest(query_secret, admin_secret):
-        # Build clean URL without the secret param
-        clean_url = str(request.url).split("?")[0]
-        response = RedirectResponse(url=clean_url, status_code=302)
+        response = _secure_response(ADMIN_HTML)
         response.set_cookie(
             "wootbot_admin", query_secret,
             httponly=True, secure=True, max_age=86400, samesite="lax", path="/"
@@ -403,6 +401,11 @@ ADMIN_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
+// Strip secret from URL bar without reload
+if (window.location.search.includes('secret=')) {
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
 const API = window.location.origin + '/wootbot';
 
 // Tabs
