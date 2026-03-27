@@ -175,8 +175,8 @@ async def api_update_settings(req: UpdateSettingsRequest):
     return {"status": "ok", "updated": updated}
 
 
-# #4: POST-based login to avoid secret in URL/logs
-@router.post("/login")
+# #4: POST-based login — exempt from router auth
+@router.post("/login", dependencies=[])
 async def admin_login(request: Request):
     """Authenticate and set cookie without exposing secret in URL."""
     body = await request.json()
@@ -184,15 +184,27 @@ async def admin_login(request: Request):
     admin_secret = _get_admin_secret()
     if not admin_secret or hmac.compare_digest(secret, admin_secret):
         response = HTMLResponse('{"status":"ok"}', status_code=200)
-        response.set_cookie(
-            "wootbot_admin", secret,
-            httponly=True, secure=True, max_age=86400, samesite="lax", path="/"
-        )
+        _set_auth_cookie(response, secret, request)
         return response
     raise HTTPException(status_code=401, detail="Invalid secret")
 
 
 # ── Admin UI (embeddable as Chatwoot Dashboard App) ──────────────────
+
+def _is_https(request: Request) -> bool:
+    """Check if the request came over HTTPS (directly or via proxy)."""
+    if request.url.scheme == "https":
+        return True
+    return request.headers.get("X-Forwarded-Proto", "") == "https"
+
+
+def _set_auth_cookie(response, secret: str, request: Request):
+    """Set the admin auth cookie with correct secure flag."""
+    response.set_cookie(
+        "wootbot_admin", secret,
+        httponly=True, secure=_is_https(request), max_age=86400, samesite="lax", path="/"
+    )
+
 
 def _frame_ancestors():
     """Build CSP frame-ancestors from allowed_origins setting."""
@@ -221,10 +233,7 @@ async def admin_ui(request: Request):
     query_secret = request.query_params.get("secret", "")
     if query_secret and hmac.compare_digest(query_secret, admin_secret):
         response = _secure_response(ADMIN_HTML)
-        response.set_cookie(
-            "wootbot_admin", query_secret,
-            httponly=True, secure=True, max_age=86400, samesite="lax", path="/"
-        )
+        _set_auth_cookie(response, query_secret, request)
         return response
 
     # Check cookie/header auth
