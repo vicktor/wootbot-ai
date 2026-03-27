@@ -92,6 +92,7 @@ def init_db():
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_documents_embedding
-            ON documents USING hnsw (embedding vector_cosine_ops)
+            ON documents USING ivfflat (embedding vector_cosine_ops)
+            WITH (lists = 100)
         """))
         conn.commit()
