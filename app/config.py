@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     llm_model: str = "gemini-2.0-flash"
     llm_base_url: str | None = None
 
+    # Security
+    webhook_secret: str = ""  # shared secret to validate webhook requests
+    admin_secret: str = ""    # secret for admin panel access
+    allowed_origins: str = "https://support.listen.doctor"  # comma-separated origins for iframe
+
     # Database
     database_url: str = "postgresql://postgres:password@localhost:5432/wootbot"
 

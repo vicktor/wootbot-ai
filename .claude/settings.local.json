@@ -6,7 +6,8 @@
       "Bash(find /Users/victor/Downloads/chatwoot-ai-bot -type f \\\\\\(-name README* -o -name *.md \\\\\\))",
       "Bash(ls:*)",
       "WebSearch",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "WebFetch(domain:www.chatwoot.com)"
     ]
   }
 }

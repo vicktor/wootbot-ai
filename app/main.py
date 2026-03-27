@@ -1,6 +1,6 @@
 import structlog
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 
 from app.config import get_settings
 from app.database import init_db, get_session, ConversationLog, get_bot_setting
@@ -152,6 +152,13 @@ async def process_message(conversation_id: int, message_content: str, contact_in
 @app.post("/webhook")
 async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
     """Receive webhook events from Chatwoot."""
+    settings = get_settings()
+    if settings.webhook_secret:
+        token = request.headers.get("X-Webhook-Secret") or request.query_params.get("secret")
+        if token != settings.webhook_secret:
+            logger.warning("webhook_unauthorized", ip=request.client.host)
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
     payload = await request.json()
 
     event_type = payload.get("event")

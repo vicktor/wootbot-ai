@@ -13,24 +13,21 @@ from app.rag.ingest import (
 from app.database import get_session, ConversationLog, get_bot_setting, set_bot_setting
 from app.config import get_settings
 
-ADMIN_SECRET = os.environ.get("ADMIN_SECRET", "")
+def _get_admin_secret():
+    return get_settings().admin_secret
+
 
 async def verify_admin(request):
     """Check auth via cookie, query param, or header."""
-    from fastapi import Request
-    # Check cookie first (for UI sessions)
-    token = request.cookies.get("wootbot_admin")
-    if token == ADMIN_SECRET and ADMIN_SECRET:
+    secret = _get_admin_secret()
+    if not secret:
         return True
-    # Check header (for API calls)
-    token = request.headers.get("X-Admin-Secret")
-    if token == ADMIN_SECRET and ADMIN_SECRET:
-        return True
-    # Check query param (for initial login)
-    token = request.query_params.get("secret")
-    if token == ADMIN_SECRET and ADMIN_SECRET:
-        return True
-    return False
+    token = (
+        request.cookies.get("wootbot_admin")
+        or request.headers.get("X-Admin-Secret")
+        or request.query_params.get("secret")
+    )
+    return token == secret
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/admin")
@@ -158,22 +155,32 @@ async def api_update_settings(req: UpdateSettingsRequest):
 
 # ── Admin UI (embeddable as Chatwoot Dashboard App) ──────────────────
 
+def _frame_ancestors():
+    """Build CSP frame-ancestors from allowed_origins setting."""
+    settings = get_settings()
+    origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+    return "frame-ancestors 'self' " + " ".join(origins) if origins else "frame-ancestors 'self'"
+
+
+def _secure_response(html: str, secret: str = None) -> HTMLResponse:
+    """Return HTML response with iframe security headers."""
+    response = HTMLResponse(html)
+    response.headers["Content-Security-Policy"] = _frame_ancestors()
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    if secret:
+        response.set_cookie("wootbot_admin", secret, httponly=True, max_age=86400, samesite="lax")
+    return response
+
+
 @router.get("/ui", response_class=HTMLResponse)
 async def admin_ui(request: Request):
-    from fastapi import Request
-    from fastapi.responses import HTMLResponse
-    if not ADMIN_SECRET:
-        return HTMLResponse(ADMIN_HTML)
-    # Check if authenticated
+    admin_secret = _get_admin_secret()
+    if not admin_secret:
+        return _secure_response(ADMIN_HTML)
     if await verify_admin(request):
-        # Set cookie and serve UI
         secret = request.query_params.get("secret") or request.cookies.get("wootbot_admin")
-        response = HTMLResponse(ADMIN_HTML)
-        if secret:
-            response.set_cookie("wootbot_admin", secret, httponly=True, max_age=86400, samesite="strict")
-        return response
-    # Show login page
-    return HTMLResponse(LOGIN_HTML)
+        return _secure_response(ADMIN_HTML, secret=secret)
+    return _secure_response(LOGIN_HTML)
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
