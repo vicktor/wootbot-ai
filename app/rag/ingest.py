@@ -86,7 +86,7 @@ async def ingest_url(url: str, title: str = None) -> int:
 
     try:
         # #13: Use async httpx instead of sync requests
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             response = await client.get(url, timeout=30, headers={
                 "User-Agent": "WootBot/1.0 Knowledge Ingester"
             })
