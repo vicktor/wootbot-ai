@@ -99,6 +99,8 @@ async def process_message(conversation_id: int, message_content: str, contact_in
                     if translated_closing:
                         parts.append(translated_closing)
                     response_text = "\n\n".join(parts)
+                # Email renders as HTML — convert newlines to <br>
+                response_text = response_text.replace("\n", "<br>")
 
             # 7. Send AI response
             await chatwoot.send_message(conversation_id, response_text)
