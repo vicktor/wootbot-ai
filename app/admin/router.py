@@ -39,13 +39,14 @@ async def verify_admin(request: Request):
     return hmac.compare_digest(token, secret)
 
 
-# #1: Apply auth as dependency on the entire router
 async def require_admin(request: Request):
     if not await verify_admin(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+# Two routers: protected (API) and public (UI + login)
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+public_router = APIRouter(prefix="/admin")
 
 
 class IngestURLRequest(BaseModel):
@@ -175,8 +176,7 @@ async def api_update_settings(req: UpdateSettingsRequest):
     return {"status": "ok", "updated": updated}
 
 
-# #4: POST-based login — exempt from router auth
-@router.post("/login", dependencies=[])
+@public_router.post("/login")
 async def admin_login(request: Request):
     """Authenticate and set cookie without exposing secret in URL."""
     body = await request.json()
@@ -221,8 +221,7 @@ def _secure_response(html: str) -> HTMLResponse:
     return response
 
 
-# UI endpoint is exempt from router-level auth — it handles its own auth + login page
-@router.get("/ui", response_class=HTMLResponse, dependencies=[])
+@public_router.get("/ui", response_class=HTMLResponse)
 async def admin_ui(request: Request):
     admin_secret = _get_admin_secret()
     if not admin_secret:

@@ -8,7 +8,7 @@ from app.database import init_db, get_session, ConversationLog, get_bot_setting
 from app.chatwoot.client import ChatwootClient
 from app.llm.provider import get_llm_provider
 from app.rag.search import search_documents, format_context
-from app.admin.router import router as admin_router
+from app.admin.router import router as admin_router, public_router as admin_public_router
 
 logger = structlog.get_logger()
 chatwoot = ChatwootClient()
@@ -210,6 +210,7 @@ async def chatwoot_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 # ── Admin Panel (embeddable as Chatwoot Dashboard App) ───────────────
+app.include_router(admin_public_router)
 app.include_router(admin_router)
 
 
