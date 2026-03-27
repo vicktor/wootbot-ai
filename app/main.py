@@ -66,12 +66,21 @@ async def process_message(conversation_id: int, message_content: str, contact_in
         confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.3}
         confidence_score = confidence_map.get(confidence, 0.3)
 
-        is_handoff = (
-            response_text == "conversation_handoff"
-            or (confidence_score < settings.confidence_threshold and top_similarity < 0.5)
-        )
-
         is_email = channel and "email" in channel.lower()
+
+        if is_email:
+            # Email: be conservative — skip if similarity OR confidence is low
+            is_handoff = (
+                response_text == "conversation_handoff"
+                or top_similarity < 0.5
+                or confidence_score < settings.confidence_threshold
+            )
+        else:
+            # Chat: handoff only when both confidence AND similarity are low
+            is_handoff = (
+                response_text == "conversation_handoff"
+                or (confidence_score < settings.confidence_threshold and top_similarity < 0.5)
+            )
 
         if is_handoff:
             reason = reasoning or f"Low confidence ({confidence}), similarity={top_similarity:.2f}"
