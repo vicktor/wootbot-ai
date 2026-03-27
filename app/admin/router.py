@@ -451,11 +451,10 @@ function setLoading(btnId, loading) {
   }
 }
 
-// #10: Escape both HTML entities AND single quotes to prevent XSS
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
-  return d.innerHTML.replace(/'/g, '&#39;');
+  return d.innerHTML;
 }
 
 async function uploadFile() {
@@ -561,9 +560,12 @@ async function loadDocs() {
         '<td><strong>' + esc(s.title) + '</strong></td>' +
         '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6b7280">' + esc(s.source) + '</td>' +
         '<td>' + s.chunks + '</td>' +
-        '<td><button class="btn btn-danger" onclick="deleteDoc(\'' + esc(s.source) + '\')">Delete</button></td>' +
+        '<td><button class="btn btn-danger" data-source="' + esc(s.source) + '">Delete</button></td>' +
       '</tr>'
     ).join('');
+    tbody.querySelectorAll('[data-source]').forEach(btn => {
+      btn.addEventListener('click', () => deleteDoc(btn.dataset.source));
+    });
   } catch(e) { console.error(e); }
 }
 
