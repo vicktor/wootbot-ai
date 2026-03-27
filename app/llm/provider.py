@@ -67,12 +67,15 @@ def _build_prompt(question: str, context: str, history: list[dict] = None, conta
         greeting = get_bot_setting("email_greeting", settings.email_greeting)
         closing = get_bot_setting("email_closing", settings.email_closing)
         if greeting or closing:
-            parts = []
+            email_instructions = "\n[Email Formatting — MANDATORY, overrides chat guidelines above]\n"
+            email_instructions += "This message comes from an email channel. The response MUST follow this exact structure:\n"
             if greeting:
-                parts.append(f"- Start the response with this greeting, translated to the customer's language: \"{greeting}\"")
+                email_instructions += f"1. GREETING (first line): Translate the following text to the customer's detected language and place it at the very beginning, followed by a blank line: \"{greeting}\"\n"
             if closing:
-                parts.append(f"- End the response with this closing, translated to the customer's language: \"{closing}\"")
-            email_instructions = "\n[Email Formatting]\nThis message comes from an email channel. Apply formal email formatting:\n" + "\n".join(parts) + "\n"
+                email_instructions += f"2. CLOSING (last lines): Translate the following text to the customer's detected language and place it at the very end, after a blank line: \"{closing}\"\n"
+            email_instructions += "3. The main answer goes between the greeting and the closing.\n"
+            email_instructions += "4. IMPORTANT: The greeting and closing MUST be fully translated — do NOT keep any words in the original language.\n"
+            email_instructions += "5. The conciseness rule (1-3 sentences) does NOT apply to email — include greeting + answer + closing.\n"
 
     system = SYSTEM_PROMPT.format(
         assistant_name="Support Assistant",
