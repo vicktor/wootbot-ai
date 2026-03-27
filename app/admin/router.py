@@ -308,13 +308,15 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WootBot Admin - Login</title>
 <style>
-body{font-family:-apple-system,sans-serif;display:grid;place-content:center;height:100vh;background:#151718;color:#e8e8e8;margin:0}
-.box{background:#1b1c1f;padding:32px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.3);text-align:center;max-width:320px}
-h2{margin-bottom:16px;font-size:1.2rem;color:#e8e8e8}
-input{width:100%;padding:10px;border:1px solid #3d3f43;border-radius:6px;margin-bottom:12px;font-size:0.9rem;background:#25272b;color:#e8e8e8}
-button{width:100%;padding:10px;background:#1f93ff;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600}
-button:hover{background:#0070e0}
-.err{color:#ff5c5c;font-size:0.8rem;margin-top:8px;display:none}
+:root{--bg:#f8f9fa;--surface:#fff;--border:#d1d5db;--text:#1b2a4a;--text-muted:#6b7280;--input-bg:#fff;--accent:#1f93ff;--accent-hover:#0070e0;--err:#dc2626;--shadow:rgba(0,0,0,0.08)}
+@media(prefers-color-scheme:dark){:root{--bg:#151718;--surface:#1b1c1f;--border:#3d3f43;--text:#e8e8e8;--text-muted:#858b93;--input-bg:#25272b;--accent:#1f93ff;--accent-hover:#0070e0;--err:#ff5c5c;--shadow:rgba(0,0,0,0.3)}}
+body{font-family:-apple-system,sans-serif;display:grid;place-content:center;height:100vh;background:var(--bg);color:var(--text);margin:0}
+.box{background:var(--surface);padding:32px;border-radius:8px;box-shadow:0 1px 3px var(--shadow);text-align:center;max-width:320px}
+h2{margin-bottom:16px;font-size:1.2rem;color:var(--text)}
+input{width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:0.9rem;background:var(--input-bg);color:var(--text)}
+button{width:100%;padding:10px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600}
+button:hover{background:var(--accent-hover)}
+.err{color:var(--err);font-size:0.8rem;margin-top:8px;display:none}
 </style></head><body>
 <div class="box">
 <h2>WootBot Admin</h2>
@@ -350,49 +352,64 @@ ADMIN_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WootBot AI - Knowledge Base</title>
 <style>
+  :root {
+    --bg: #f8f9fa; --surface: #fff; --surface-alt: #f0f4ff; --border: #e5e7eb; --border-input: #d1d5db;
+    --text: #1b2a4a; --text-secondary: #6b7280; --text-muted: #9ca3af; --label: #374151;
+    --input-bg: #fff; --accent: #1f93ff; --accent-hover: #0070e0;
+    --danger: #dc2626; --danger-hover: #b91c1c; --success: #059669;
+    --shadow: rgba(0,0,0,0.08); --drop-hover-bg: #f0f4ff;
+    --status-ok: #f0fdf4; --status-err: #fef2f2;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg: #151718; --surface: #1b1c1f; --surface-alt: #25272b; --border: #2d2f33; --border-input: #3d3f43;
+    --text: #e8e8e8; --text-secondary: #858b93; --text-muted: #6b7074; --label: #a0a5ab;
+    --input-bg: #25272b; --accent: #1f93ff; --accent-hover: #0070e0;
+    --danger: #c53030; --danger-hover: #9b2c2c; --success: #059669;
+    --shadow: rgba(0,0,0,0.3); --drop-hover-bg: #1e2530;
+    --status-ok: #1b2d1b; --status-err: #2d1b1b;
+  }}
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #151718; color: #e8e8e8; padding: 20px; }
-  h1 { font-size: 1.4rem; margin-bottom: 4px; color: #f0f0f0; }
-  h3 { color: #e0e0e0; }
-  .subtitle { color: #858b93; font-size: 0.85rem; margin-bottom: 20px; }
-  .card { background: #1b1c1f; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); border: 1px solid #2d2f33; }
-  .card h2 { font-size: 1rem; margin-bottom: 12px; color: #e0e0e0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  h3 { color: var(--text); }
+  .subtitle { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 20px; }
+  .card { background: var(--surface); border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px var(--shadow); border: 1px solid var(--border); }
+  .card h2 { font-size: 1rem; margin-bottom: 12px; }
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-  .stat { text-align: center; padding: 12px; background: #25272b; border-radius: 6px; border: 1px solid #2d2f33; }
-  .stat-value { font-size: 1.8rem; font-weight: 700; color: #1f93ff; }
-  .stat-label { font-size: 0.75rem; color: #858b93; margin-top: 2px; }
-  .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #2d2f33; }
-  .tab { padding: 8px 16px; cursor: pointer; font-size: 0.85rem; border-bottom: 2px solid transparent; margin-bottom: -2px; color: #858b93; }
-  .tab:hover { color: #c0c0c0; }
-  .tab.active { color: #1f93ff; border-bottom-color: #1f93ff; font-weight: 600; }
+  .stat { text-align: center; padding: 12px; background: var(--surface-alt); border-radius: 6px; border: 1px solid var(--border); }
+  .stat-value { font-size: 1.8rem; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px; }
+  .tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
+  .tab { padding: 8px 16px; cursor: pointer; font-size: 0.85rem; border-bottom: 2px solid transparent; margin-bottom: -2px; color: var(--text-secondary); }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
   .tab-content { display: none; }
   .tab-content.active { display: block; }
-  input[type="text"], input[type="url"], input[type="password"], select { width: 100%; padding: 8px 12px; border: 1px solid #3d3f43; border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; background: #25272b; color: #e8e8e8; }
-  input::placeholder { color: #6b7074; }
-  textarea { width: 100%; padding: 8px 12px; border: 1px solid #3d3f43; border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; min-height: 80px; resize: vertical; background: #25272b; color: #e8e8e8; }
-  textarea::placeholder { color: #6b7074; }
-  label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: #a0a5ab; }
+  input[type="text"], input[type="url"], input[type="password"], select { width: 100%; padding: 8px 12px; border: 1px solid var(--border-input); border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; background: var(--input-bg); color: var(--text); }
+  input::placeholder, textarea::placeholder { color: var(--text-muted); }
+  textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border-input); border-radius: 6px; font-size: 0.9rem; margin-bottom: 8px; min-height: 80px; resize: vertical; background: var(--input-bg); color: var(--text); }
+  label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: var(--label); }
   .btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
-  .btn-primary { background: #1f93ff; color: white; }
-  .btn-primary:hover { background: #0070e0; }
-  .btn-danger { background: #c53030; color: white; font-size: 0.75rem; padding: 4px 10px; }
-  .btn-danger:hover { background: #9b2c2c; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-danger { background: var(--danger); color: white; font-size: 0.75rem; padding: 4px 10px; }
+  .btn-danger:hover { background: var(--danger-hover); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .file-drop { border: 2px dashed #3d3f43; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: border-color 0.2s; margin-bottom: 8px; }
-  .file-drop:hover, .file-drop.dragover { border-color: #1f93ff; background: #1e2530; }
+  .file-drop { border: 2px dashed var(--border-input); border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: border-color 0.2s; margin-bottom: 8px; }
+  .file-drop:hover, .file-drop.dragover { border-color: var(--accent); background: var(--drop-hover-bg); }
   .file-drop input { display: none; }
-  .file-drop p { color: #858b93; font-size: 0.85rem; }
-  .file-drop .formats { font-size: 0.75rem; color: #6b7074; margin-top: 4px; }
+  .file-drop p { color: var(--text-secondary); font-size: 0.85rem; }
+  .file-drop .formats { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th { text-align: left; padding: 8px; border-bottom: 2px solid #2d2f33; color: #858b93; font-size: 0.75rem; text-transform: uppercase; }
-  td { padding: 8px; border-bottom: 1px solid #25272b; }
+  th { text-align: left; padding: 8px; border-bottom: 2px solid var(--border); color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; }
+  td { padding: 8px; border-bottom: 1px solid var(--border); }
   .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 6px; color: white; font-size: 0.85rem; z-index: 999; animation: fadeIn 0.3s; }
-  .toast.success { background: #059669; }
-  .toast.error { background: #c53030; }
+  .toast.success { background: var(--success); }
+  .toast.error { background: var(--danger); }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid white; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 6px; vertical-align: middle; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  hr { border-color: #2d2f33; }
+  hr { border-color: var(--border); }
 </style>
 </head>
 <body>
@@ -452,7 +469,7 @@ ADMIN_HTML = """<!DOCTYPE html>
   </div>
 
   <div id="tab-tickets" class="tab-content">
-    <p style="color:#858b93;font-size:0.85rem;margin-bottom:12px">Import resolved Chatwoot conversations into the knowledge base. The bot will learn from successfully handled tickets.</p>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">Import resolved Chatwoot conversations into the knowledge base. The bot will learn from successfully handled tickets.</p>
     <label>Max pages to fetch (25 tickets per page, max 100)</label>
     <input type="text" id="tickets-pages" placeholder="10" value="10">
     <button class="btn btn-primary" id="btn-tickets" onclick="ingestTickets()">Import Resolved Tickets</button>
@@ -460,7 +477,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
   <div id="tab-settings" class="tab-content">
     <h3 style="margin-bottom:8px;font-size:0.9rem">LLM Provider</h3>
-    <p style="color:#858b93;font-size:0.85rem;margin-bottom:12px">Choose the LLM provider for generating responses and translations.</p>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">Choose the LLM provider for generating responses and translations.</p>
     <label>Provider</label>
     <select id="set-llm-provider" onchange="updateLLMModelOptions()">
       <option value="gemini">Google (Gemini)</option>
@@ -474,9 +491,9 @@ ADMIN_HTML = """<!DOCTYPE html>
     <label>Base URL (optional, for OpenAI-compatible endpoints)</label>
     <input type="text" id="set-llm-baseurl" placeholder="https://api.example.com/v1">
     <button class="btn btn-primary" id="btn-llm" onclick="saveLLM()">Save LLM Config</button>
-    <hr style="margin:20px 0;border:none;border-top:1px solid #e5e7eb">
+    <hr style="margin:20px 0;border:none;border-top:1px solid var(--border)">
     <h3 style="margin-bottom:8px;font-size:0.9rem">Embedding Provider</h3>
-    <p style="color:#858b93;font-size:0.85rem;margin-bottom:12px">Choose the embedding provider and model. Changing provider will re-generate all embeddings (may take a few minutes).</p>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">Choose the embedding provider and model. Changing provider will re-generate all embeddings (may take a few minutes).</p>
     <label>Provider</label>
     <select id="set-emb-provider" onchange="updateModelOptions()">
       <option value="gemini">Google (Gemini)</option>
@@ -486,11 +503,11 @@ ADMIN_HTML = """<!DOCTYPE html>
     <select id="set-emb-model"></select>
     <label>API Key (leave empty to use LLM key from .env)</label>
     <input type="password" id="set-emb-key" placeholder="API key for embedding provider">
-    <div id="emb-status" style="display:none;padding:8px;background:#25272b;border-radius:6px;margin-bottom:8px;font-size:0.85rem;border:1px solid #2d2f33"></div>
+    <div id="emb-status" style="display:none;padding:8px;background:var(--surface-alt);border-radius:6px;margin-bottom:8px;font-size:0.85rem;border:1px solid var(--border)"></div>
     <button class="btn btn-primary" id="btn-embedding" onclick="saveEmbedding()">Save Embedding Config</button>
-    <hr style="margin:20px 0;border:none;border-top:1px solid #e5e7eb">
+    <hr style="margin:20px 0;border:none;border-top:1px solid var(--border)">
     <h3 style="margin-bottom:8px;font-size:0.9rem">Email Formatting</h3>
-    <p style="color:#858b93;font-size:0.85rem;margin-bottom:12px">The greeting and closing are automatically translated by the AI to the customer's language.</p>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">The greeting and closing are automatically translated by the AI to the customer's language.</p>
     <label>Email Greeting</label>
     <input type="text" id="set-email-greeting" placeholder="Hola, gracias por contactar con nosotros.">
     <label>Email Closing</label>
@@ -671,13 +688,13 @@ async function loadDocs() {
     const data = await r.json();
     const tbody = document.getElementById('doc-table');
     if (!data.sources || !data.sources.length) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:#6b7074">No documents ingested yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No documents ingested yet</td></tr>';
       return;
     }
     tbody.innerHTML = data.sources.map(s =>
       '<tr>' +
         '<td><strong>' + esc(s.title) + '</strong></td>' +
-        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#858b93">' + esc(s.source) + '</td>' +
+        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)">' + esc(s.source) + '</td>' +
         '<td>' + s.chunks + '</td>' +
         '<td><button class="btn btn-danger" data-source="' + esc(s.source) + '">Delete</button></td>' +
       '</tr>'
@@ -829,10 +846,10 @@ function pollReembedStatus() {
         clearInterval(interval);
         if (d.error) {
           el.textContent = 'Error: ' + d.error;
-          el.style.background = '#2d1b1b';
+          el.style.background = 'var(--status-err)';
         } else {
           el.textContent = 'Re-embedding complete! ' + d.done + ' chunks processed.';
-          el.style.background = '#1b2d1b';
+          el.style.background = 'var(--status-ok)';
           setTimeout(() => { el.style.display = 'none'; }, 5000);
         }
         loadDocs(); loadStats();
