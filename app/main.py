@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks
 
 from app.config import get_settings
-from app.database import init_db, get_session, ConversationLog
+from app.database import init_db, get_session, ConversationLog, get_bot_setting
 from app.chatwoot.client import ChatwootClient
 from app.llm.provider import get_llm_provider
 from app.rag.search import search_documents, format_context
@@ -83,7 +83,24 @@ async def process_message(conversation_id: int, message_content: str, contact_in
                 await chatwoot.handoff_to_agent(conversation_id, reason=reason, language=detected_lang)
                 logger.info("handoff", conversation_id=conversation_id, reason=reason, lang=detected_lang)
         else:
-            # 6. Send AI response
+            # 6. Format email with greeting/closing if email channel
+            if is_email:
+                greeting = get_bot_setting("email_greeting", settings.email_greeting)
+                closing = get_bot_setting("email_closing", settings.email_closing)
+                # Normalize \n from .env (stored as literal backslash-n)
+                closing = closing.replace("\\n", "\n") if closing else ""
+                if greeting or closing:
+                    translated_greeting = await llm.translate(greeting, detected_lang) if greeting else ""
+                    translated_closing = await llm.translate(closing, detected_lang) if closing else ""
+                    parts = []
+                    if translated_greeting:
+                        parts.append(translated_greeting)
+                    parts.append(response_text)
+                    if translated_closing:
+                        parts.append(translated_closing)
+                    response_text = "\n\n".join(parts)
+
+            # 7. Send AI response
             await chatwoot.send_message(conversation_id, response_text)
 
             # 8. Add private note with metadata for agents

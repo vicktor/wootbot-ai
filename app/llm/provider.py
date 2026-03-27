@@ -56,38 +56,20 @@ def build_contact_context(contact_info: dict = None) -> str:
     return "[Contact Information]\n" + "\n".join(lines) + "\n\n"
 
 
+TRANSLATE_PROMPT = """Translate the following text to {lang}. Return ONLY the translated text, nothing else. Preserve line breaks exactly.
+
+{text}"""
+
+
 def _build_prompt(question: str, context: str, history: list[dict] = None, contact_info: dict = None, channel: str = None) -> str:
     """Build the full prompt with system message, context, history and question."""
     settings = get_settings()
-
-    email_instructions = ""
-    is_email = channel and "email" in channel.lower()
-    if is_email:
-        from app.database import get_bot_setting
-        greeting = get_bot_setting("email_greeting", settings.email_greeting)
-        closing = get_bot_setting("email_closing", settings.email_closing)
-        if greeting or closing:
-            # Show closing lines individually so the LLM preserves the structure
-            closing_lines = closing.replace("\\n", "\n").split("\n") if closing else []
-
-            email_instructions = "\n[Email Formatting — MANDATORY, overrides chat guidelines above]\n"
-            email_instructions += "This message comes from an email channel. The response MUST follow this exact structure:\n"
-            if greeting:
-                email_instructions += f"1. GREETING (first line): Translate this to the customer's detected language and place it at the very beginning, followed by a blank line: \"{greeting}\"\n"
-            if closing_lines:
-                email_instructions += "2. CLOSING (last lines): Translate EACH of the following lines to the customer's detected language. Place them at the very end after a blank line. Each line MUST be on its own separate line (use \\n in the JSON string):\n"
-                for line in closing_lines:
-                    email_instructions += f"   - \"{line.strip()}\"\n"
-            email_instructions += "3. The main answer goes between the greeting and the closing.\n"
-            email_instructions += "4. IMPORTANT: The greeting and closing MUST be fully translated — do NOT keep any words in the original language.\n"
-            email_instructions += "5. The conciseness rule (1-3 sentences) does NOT apply to email — include greeting + answer + closing.\n"
-            email_instructions += "6. IMPORTANT: In the JSON response field, use \\n for line breaks — especially between closing lines.\n"
 
     system = SYSTEM_PROMPT.format(
         assistant_name="Support Assistant",
         company="Listen.Doctor",
         contact_context=build_contact_context(contact_info),
-        custom_instructions=email_instructions,
+        custom_instructions="",
     )
 
     history_text = ""
@@ -154,6 +136,10 @@ class LLMProvider(ABC):
     async def get_embedding(self, text: str) -> list[float]:
         pass
 
+    @abstractmethod
+    async def translate(self, text: str, target_lang: str) -> str:
+        pass
+
 
 class GeminiProvider(LLMProvider):
     def __init__(self):
@@ -179,6 +165,17 @@ class GeminiProvider(LLMProvider):
             model=self.embed_model, contents=text
         )
         return result.embeddings[0].values
+
+    async def translate(self, text: str, target_lang: str) -> str:
+        prompt = TRANSLATE_PROMPT.format(lang=target_lang, text=text)
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name, contents=prompt
+            )
+            return response.text.strip()
+        except Exception as e:
+            logger.error("translate_error", error=str(e))
+            return text
 
 
 class OpenAIProvider(LLMProvider):
@@ -209,6 +206,17 @@ class OpenAIProvider(LLMProvider):
         )
         return response.data[0].embedding
 
+    async def translate(self, text: str, target_lang: str) -> str:
+        prompt = TRANSLATE_PROMPT.format(lang=target_lang, text=text)
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model, messages=[{"role": "user", "content": prompt}], temperature=0.1
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error("translate_error", error=str(e))
+            return text
+
 
 class AnthropicProvider(LLMProvider):
     def __init__(self):
@@ -237,6 +245,17 @@ class AnthropicProvider(LLMProvider):
             model="gemini-embedding-001", contents=text
         )
         return result.embeddings[0].values
+
+    async def translate(self, text: str, target_lang: str) -> str:
+        prompt = TRANSLATE_PROMPT.format(lang=target_lang, text=text)
+        try:
+            response = await self.client.messages.create(
+                model=self.model, max_tokens=256, messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text.strip()
+        except Exception as e:
+            logger.error("translate_error", error=str(e))
+            return text
 
 
 def get_llm_provider() -> LLMProvider:
