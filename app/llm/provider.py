@@ -67,15 +67,21 @@ def _build_prompt(question: str, context: str, history: list[dict] = None, conta
         greeting = get_bot_setting("email_greeting", settings.email_greeting)
         closing = get_bot_setting("email_closing", settings.email_closing)
         if greeting or closing:
+            # Show closing lines individually so the LLM preserves the structure
+            closing_lines = closing.replace("\\n", "\n").split("\n") if closing else []
+
             email_instructions = "\n[Email Formatting — MANDATORY, overrides chat guidelines above]\n"
             email_instructions += "This message comes from an email channel. The response MUST follow this exact structure:\n"
             if greeting:
-                email_instructions += f"1. GREETING (first line): Translate the following text to the customer's detected language and place it at the very beginning, followed by a blank line: \"{greeting}\"\n"
-            if closing:
-                email_instructions += f"2. CLOSING (last lines): Translate the following text to the customer's detected language and place it at the very end, after a blank line: \"{closing}\"\n"
+                email_instructions += f"1. GREETING (first line): Translate this to the customer's detected language and place it at the very beginning, followed by a blank line: \"{greeting}\"\n"
+            if closing_lines:
+                email_instructions += "2. CLOSING (last lines): Translate EACH of the following lines to the customer's detected language. Place them at the very end after a blank line. Each line MUST be on its own separate line (use \\n in the JSON string):\n"
+                for line in closing_lines:
+                    email_instructions += f"   - \"{line.strip()}\"\n"
             email_instructions += "3. The main answer goes between the greeting and the closing.\n"
             email_instructions += "4. IMPORTANT: The greeting and closing MUST be fully translated — do NOT keep any words in the original language.\n"
             email_instructions += "5. The conciseness rule (1-3 sentences) does NOT apply to email — include greeting + answer + closing.\n"
+            email_instructions += "6. IMPORTANT: In the JSON response field, use \\n for line breaks — especially between closing lines.\n"
 
     system = SYSTEM_PROMPT.format(
         assistant_name="Support Assistant",
